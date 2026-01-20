@@ -1,0 +1,12 @@
+name: hytale-test
+container:
+  image: localhost/hytale-server
+  ports:
+    - host: 5520
+      container: 5520
+      protocol: udp
+  volumes: {}
+  environment: {}
+server: {}
+hooks:
+  pre_start: "http://localhost:3001/tokens"
