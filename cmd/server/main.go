@@ -1,12 +1,30 @@
 package main
 
 import (
-	"github.com/bananalabs-oss/potassium/orchestrator"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+
+	"github.com/bananalabs-oss/bananagine/internal/template"
 	"github.com/gin-gonic/gin"
 )
 import "github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 
+type CreateServerRequest struct {
+	Template string `json:"template"`
+}
+
 func main() {
+	// Load templates at startup
+	templates, err := template.LoadTemplates("./templates")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Loaded %d templates\n", len(templates))
+
+	// Start docker provider
 	provider, err := docker.New()
 	if err != nil {
 		panic(err)
@@ -40,15 +58,60 @@ func main() {
 	})
 
 	r.POST("/servers/", func(c *gin.Context) {
-		var req orchestrator.AllocateRequest
+		var req CreateServerRequest
 
-		if err := c.BindJSON(&req); err != nil {
+		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 
+		// Look up template
+		tmpl, ok := templates[req.Template]
+		if !ok {
+			c.JSON(404, gin.H{"error": "template not found"})
+			return
+		}
+
+		// Merge server config into environment
+		if tmpl.Container.Environment == nil {
+			tmpl.Container.Environment = make(map[string]string)
+		}
+		for k, v := range tmpl.Server {
+			tmpl.Container.Environment[k] = v
+		}
+
+		if tmpl.Hooks.PreStart != "" {
+			fmt.Println("Calling pre_start hook:", tmpl.Hooks.PreStart)
+
+			// Call the hook URL
+			resp, err := http.Get(tmpl.Hooks.PreStart)
+			if err != nil {
+				fmt.Println("Hook error:", err)
+				c.JSON(500, gin.H{"error": "hook failed: " + err.Error()})
+				return
+			}
+			defer resp.Body.Close()
+
+			// Parse response
+			var hookResp struct {
+				Env map[string]string `json:"env"`
+			}
+			json.NewDecoder(resp.Body).Decode(&hookResp)
+
+			fmt.Println("Hook returned env vars:", hookResp.Env)
+
+			// Merge into container env
+			for k, v := range hookResp.Env {
+				tmpl.Container.Environment[k] = v
+			}
+		} else {
+			fmt.Println("No pre_start hook defined")
+		}
+
+		fmt.Println("Final environment:", tmpl.Container.Environment)
+
 		ctx := c.Request.Context()
-		server, err := provider.Allocate(ctx, req)
+		server, err := provider.Allocate(ctx, tmpl.Container)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
