@@ -143,7 +143,7 @@ func main() {
 	// Registry routes
 	registryGroup := r.Group("/registry")
 	{
-		registryGroup.POST("/servers", func(c *gin.Context) {
+		registryGroup.POST("/servers/", func(c *gin.Context) {
 			// register server
 			var server registry.ServerInfo
 			if err := c.ShouldBindJSON(&server); err != nil {
@@ -159,7 +159,7 @@ func main() {
 			c.JSON(201, server)
 		})
 
-		registryGroup.GET("/servers", func(c *gin.Context) {
+		registryGroup.GET("/servers/", func(c *gin.Context) {
 			// list servers
 			filter := &registry.ListFilter{}
 
