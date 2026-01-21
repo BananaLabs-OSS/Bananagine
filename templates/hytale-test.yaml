@@ -9,4 +9,4 @@ container:
   environment: {}
 server: {}
 hooks:
-  pre_start: "http://localhost:3001/tokens"
+  pre_start: "http://localhost:3002/tokens"
