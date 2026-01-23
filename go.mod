@@ -4,7 +4,10 @@ go 1.25.6
 
 require github.com/bananalabs-oss/potassium v0.0.0
 
-require github.com/gin-gonic/gin v1.11.0
+require (
+	github.com/gin-gonic/gin v1.11.0
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
@@ -63,7 +66,6 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/tools v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/bananalabs-oss/potassium => ../Potassium
