@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/bananalabs-oss/bananagine/internal/ips"
+	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
 	"github.com/bananalabs-oss/potassium/registry"
 	"github.com/gin-gonic/gin"
@@ -30,6 +33,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	ipPool := ips.NewPool("10.99.0.10", "10.99.0.250")
+	portPool := ports.NewPool(5521, 5599)
 
 	reg, err := registry.New()
 	if err != nil {
@@ -81,6 +87,9 @@ func main() {
 				return
 			}
 
+			// Generate server ID
+			serverID := fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
+
 			// Merge server config into environment
 			if tmpl.Container.Environment == nil {
 				tmpl.Container.Environment = make(map[string]string)
@@ -88,6 +97,48 @@ func main() {
 			for k, v := range tmpl.Server {
 				tmpl.Container.Environment[k] = v
 			}
+
+			var allocatedIP string
+			var allocatedPort int
+
+			if tmpl.Container.Network != "" {
+				// Overlay mode - static IP
+				ip, err := ipPool.Allocate(serverID)
+				if err != nil {
+					c.JSON(503, gin.H{"error": err.Error()})
+					return
+				}
+				allocatedIP = ip
+				tmpl.Container.IP = ip
+
+				// Get port from template (default 5520)
+				allocatedPort = 5520
+				if len(tmpl.Container.Ports) > 0 {
+					allocatedPort = tmpl.Container.Ports[0].Container
+				}
+
+				tmpl.Container.Environment["SERVER_HOST"] = ip
+				fmt.Printf("Overlay mode: %s -> %s:%d\n", serverID, ip, allocatedPort)
+			} else {
+				// Host mode - dynamic port
+				port, err := portPool.Allocate(serverID)
+				if err != nil {
+					c.JSON(503, gin.H{"error": err.Error()})
+					return
+				}
+				allocatedPort = port
+
+				for i := range tmpl.Container.Ports {
+					tmpl.Container.Ports[i].Host = port
+					tmpl.Container.Ports[i].Container = port
+				}
+
+				tmpl.Container.Environment["SERVER_HOST"] = "127.0.0.1"
+				fmt.Printf("Host mode: %s -> 127.0.0.1:%d\n", serverID, port)
+			}
+
+			tmpl.Container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
+			tmpl.Container.Environment["SERVER_ID"] = serverID
 
 			if tmpl.Hooks.PreStart != "" {
 				fmt.Println("Calling pre_start hook:", tmpl.Hooks.PreStart)
@@ -122,21 +173,36 @@ func main() {
 			ctx := c.Request.Context()
 			server, err := provider.Allocate(ctx, tmpl.Container)
 			if err != nil {
+				if allocatedIP != "" {
+					ipPool.Release(allocatedIP)
+				} else {
+					portPool.Release(allocatedPort)
+				}
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
+
+			// Add metadata to response
+			server.Name = serverID
+
 			c.JSON(201, server)
 		})
 
 		orchestration.DELETE("/servers/:id", func(c *gin.Context) {
 			ctx := c.Request.Context()
 			id := c.Param("id")
+
+			// Release from both pools (only one will match)
+			portPool.ReleaseByServer(id)
+			ipPool.ReleaseByServer(id)
+
 			err := provider.Deallocate(ctx, id)
 			if err != nil {
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(204, nil)
+
+			c.JSON(201, nil)
 		})
 	}
 
