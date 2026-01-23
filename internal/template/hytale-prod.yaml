@@ -1,0 +1,16 @@
+name: hytale-prod
+container:
+  image: localhost/hytale-server
+  network: banananet
+  ports:
+    - container: 5520
+      protocol: udp
+  environment:
+    SERVER_TYPE: "game"
+    SERVER_MODE: "skywars"
+    MAX_PLAYERS: "8"
+    BANANAGINE_URL: "http://10.99.0.1:3000"
+    BANANASPLIT_URL: "http://10.99.0.2:3001"
+server: {}
+hooks:
+  pre_start: "http://host.containers.internal:3002/tokens"
