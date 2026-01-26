@@ -301,6 +301,29 @@ func main() {
 			c.JSON(204, nil)
 		})
 
+		registryGroup.PUT("/servers/:id/players", func(c *gin.Context) {
+			serverID := c.Param("id")
+
+			var req struct {
+				Players int `json:"players"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+
+			err := reg.Update(serverID, func(s *registry.ServerInfo) {
+				s.Players = req.Players
+			})
+
+			if err != nil {
+				c.JSON(404, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(200, gin.H{"status": "ok"})
+		})
+
 		registryGroup.PUT("/servers/:id/matches/:matchId", func(c *gin.Context) {
 			// update match
 			serverID := c.Param("id")
