@@ -2,9 +2,8 @@ module github.com/bananalabs-oss/bananagine
 
 go 1.25.6
 
-require github.com/bananalabs-oss/potassium v0.1.0
-
 require (
+	github.com/bananalabs-oss/potassium v0.1.0
 	github.com/gin-gonic/gin v1.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -67,4 +66,3 @@ require (
 	golang.org/x/tools v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
-

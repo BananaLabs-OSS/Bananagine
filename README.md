@@ -45,6 +45,7 @@ Runs on `:3000`.
 | `DELETE` | `/registry/servers/:id` | Unregister server |
 | `PUT` | `/registry/servers/:id/matches/:matchId` | Update match |
 | `DELETE` | `/registry/servers/:id/matches/:matchId` | Remove match |
+| `PUT` | `/registry/servers/:id/players` | Update player count |
 
 **Query Parameters:**
 - `type` - Filter by server type (`lobby`, `game`)
