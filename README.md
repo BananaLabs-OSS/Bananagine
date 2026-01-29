@@ -16,7 +16,36 @@ Bananagine handles:
 go run ./cmd/server
 ```
 
-Runs on `:3000`.
+## Configuration
+
+Configuration priority: CLI flags > Environment variables > Defaults
+
+| Setting | Env Var | CLI Flag | Default |
+|---------|---------|----------|---------|
+| Listen address | `LISTEN_ADDR` | `-listen` | `:3000` |
+| Templates directory | `TEMPLATES_DIR` | `-templates` | `./templates` |
+| IP pool start | `IP_POOL_START` | `-ip-start` | `10.99.0.10` |
+| IP pool end | `IP_POOL_END` | `-ip-end` | `10.99.0.250` |
+| Port pool start | `PORT_POOL_START` | `-port-start` | `5521` |
+| Port pool end | `PORT_POOL_END` | `-port-end` | `5599` |
+
+**CLI:**
+```bash
+./bananagine -listen :3000 -templates ./templates -ip-start 10.99.0.10 -ip-end 10.99.0.250
+```
+
+**Docker Compose:**
+```yaml
+bananagine:
+  image: localhost/bananagine:local
+  ports:
+    - "3000:3000"
+  volumes:
+    - ./templates:/app/templates
+  environment:
+    - IP_POOL_START=10.99.0.10
+    - IP_POOL_END=10.99.0.250
+```
 
 ## API Reference
 
@@ -26,7 +55,7 @@ Runs on `:3000`.
 |--------|----------|-------------|
 | `GET` | `/orchestration/servers` | List running containers |
 | `GET` | `/orchestration/servers/:id` | Get container details |
-| `POST` | `/orchestration/servers/` | Create server from template |
+| `POST` | `/orchestration/servers` | Create server from template |
 | `DELETE` | `/orchestration/servers/:id` | Destroy container |
 
 **Create Server:**
@@ -38,9 +67,9 @@ Runs on `:3000`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/registry/servers/` | List registered servers |
+| `GET` | `/registry/servers` | List registered servers |
 | `GET` | `/registry/servers/:id` | Get server details |
-| `POST` | `/registry/servers/` | Register server |
+| `POST` | `/registry/servers` | Register server |
 | `PUT` | `/registry/servers/:id` | Update server |
 | `DELETE` | `/registry/servers/:id` | Unregister server |
 | `PUT` | `/registry/servers/:id/matches/:matchId` | Update match |
