@@ -2,26 +2,61 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/bananalabs-oss/bananagine/internal/ips"
 	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
+	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 	"github.com/bananalabs-oss/potassium/registry"
 	"github.com/gin-gonic/gin"
 )
-import "github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 
 type CreateServerRequest struct {
 	Template string `json:"template"`
 }
 
 func main() {
+	// CLI flags
+	listenAddr := flag.String("listen", "", "Listen address (default :3000)")
+	templatesDir := flag.String("templates", "", "Templates directory (default ./templates)")
+	ipStart := flag.String("ip-start", "", "IP pool start (default 10.99.0.10)")
+	ipEnd := flag.String("ip-end", "", "IP pool end (default 10.99.0.250)")
+	portStart := flag.Int("port-start", 0, "Port pool start (default 5521)")
+	portEnd := flag.Int("port-end", 0, "Port pool end (default 5599)")
+	flag.Parse()
+
+	// Resolve: CLI > Env > Default
+	config := struct {
+		ListenAddr   string
+		TemplatesDir string
+		IPStart      string
+		IPEnd        string
+		PortStart    int
+		PortEnd      int
+	}{
+		ListenAddr:   resolve(*listenAddr, getEnv("LISTEN_ADDR", ""), ":3000"),
+		TemplatesDir: resolve(*templatesDir, getEnv("TEMPLATES_DIR", ""), "./templates"),
+		IPStart:      resolve(*ipStart, getEnv("IP_POOL_START", ""), "10.99.0.10"),
+		IPEnd:        resolve(*ipEnd, getEnv("IP_POOL_END", ""), "10.99.0.250"),
+		PortStart:    resolveInt(*portStart, getEnvInt("PORT_POOL_START", 0), 5521),
+		PortEnd:      resolveInt(*portEnd, getEnvInt("PORT_POOL_END", 0), 5599),
+	}
+
+	// Log config
+	fmt.Printf("Listen: %s\n", config.ListenAddr)
+	fmt.Printf("Templates: %s\n", config.TemplatesDir)
+	fmt.Printf("IP pool: %s - %s\n", config.IPStart, config.IPEnd)
+	fmt.Printf("Port pool: %d - %d\n", config.PortStart, config.PortEnd)
+
 	// Load templates at startup
-	templates, err := template.LoadTemplates("./templates")
+	templates, err := template.LoadTemplates(config.TemplatesDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,8 +69,8 @@ func main() {
 		panic(err)
 	}
 
-	ipPool := ips.NewPool("10.99.0.10", "10.99.0.250")
-	portPool := ports.NewPool(5521, 5599)
+	ipPool := ips.NewPool(config.IPStart, config.IPEnd)
+	portPool := ports.NewPool(config.PortStart, config.PortEnd)
 
 	reg, err := registry.New()
 	if err != nil {
@@ -72,7 +107,7 @@ func main() {
 			c.JSON(200, servers)
 		})
 
-		orchestration.POST("/servers/", func(c *gin.Context) {
+		orchestration.POST("/servers", func(c *gin.Context) {
 			var req CreateServerRequest
 
 			if err := c.ShouldBindJSON(&req); err != nil {
@@ -209,7 +244,7 @@ func main() {
 	// Registry routes
 	registryGroup := r.Group("/registry")
 	{
-		registryGroup.POST("/servers/", func(c *gin.Context) {
+		registryGroup.POST("/servers", func(c *gin.Context) {
 			// register server
 			var server registry.ServerInfo
 			if err := c.ShouldBindJSON(&server); err != nil {
@@ -225,7 +260,7 @@ func main() {
 			c.JSON(201, server)
 		})
 
-		registryGroup.GET("/servers/", func(c *gin.Context) {
+		registryGroup.GET("/servers", func(c *gin.Context) {
 			// list servers
 			filter := &registry.ListFilter{}
 
@@ -357,8 +392,46 @@ func main() {
 		})
 	}
 
-	err = r.Run(":3000")
+	fmt.Printf("Bananagine running on %s\n", config.ListenAddr)
+	err = r.Run(config.ListenAddr)
 	if err != nil {
 		return
 	}
+}
+
+// resolve returns first non-empty value: cli > env > fallback
+func resolve(cli, env, fallback string) string {
+	if cli != "" {
+		return cli
+	}
+	if env != "" {
+		return env
+	}
+	return fallback
+}
+
+func resolveInt(cli, env, fallback int) int {
+	if cli != 0 {
+		return cli
+	}
+	if env != 0 {
+		return env
+	}
+	return fallback
+}
+
+func getEnv(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if val := os.Getenv(key); val != "" {
+		if i, err := strconv.Atoi(val); err == nil {
+			return i
+		}
+	}
+	return fallback
 }
