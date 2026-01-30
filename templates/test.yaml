@@ -1,9 +1,0 @@
-name: test-template
-container:
-  image: hello-world
-  ports: []
-  volumes: {}
-  environment: {}
-server: {}
-hooks:
-  pre_start: "http://hytale-auth:3001/tokens"
