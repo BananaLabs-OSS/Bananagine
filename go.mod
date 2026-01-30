@@ -3,7 +3,7 @@ module github.com/bananalabs-oss/bananagine
 go 1.25.6
 
 require (
-	github.com/bananalabs-oss/potassium v0.0.0-20260125043353-5c79383ae1e3
+	github.com/bananalabs-oss/potassium v0.1.0
 	github.com/gin-gonic/gin v1.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
