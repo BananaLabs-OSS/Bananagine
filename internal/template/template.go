@@ -5,18 +5,18 @@ import (
 	"path/filepath"
 
 	"github.com/bananalabs-oss/potassium/orchestrator"
+	"gopkg.in/yaml.v3"
 )
-import "gopkg.in/yaml.v3"
 
 type Hooks struct {
 	PreStart string `yaml:"pre_start"`
 }
 
 type Template struct {
-	Name      string                       `json:"name"`
-	Container orchestrator.AllocateRequest `json:"container"`
-	Server    map[string]string            `json:"server"`
-	Hooks     Hooks                        `json:"hooks"`
+	Name      string                       `yaml:"name"`
+	Container orchestrator.AllocateRequest `yaml:"container"`
+	Server    map[string]string            `yaml:"server"`
+	Hooks     Hooks                        `yaml:"hooks"`
 }
 
 func LoadTemplates(dir string) (map[string]Template, error) {
