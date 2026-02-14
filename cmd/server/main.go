@@ -13,6 +13,7 @@ import (
 	"github.com/bananalabs-oss/bananagine/internal/ips"
 	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
+	"github.com/bananalabs-oss/potassium/orchestrator"
 	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 	"github.com/bananalabs-oss/potassium/registry"
 	"github.com/gin-gonic/gin"
@@ -122,21 +123,24 @@ func main() {
 				return
 			}
 
+			// Deep copy so we don't mutate the original template
+			container := deepCopyAllocateRequest(tmpl.Container)
+
 			// Generate server ID
 			serverID := fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
 
 			// Merge server config into environment
-			if tmpl.Container.Environment == nil {
-				tmpl.Container.Environment = make(map[string]string)
+			if container.Environment == nil {
+				container.Environment = make(map[string]string)
 			}
 			for k, v := range tmpl.Server {
-				tmpl.Container.Environment[k] = v
+				container.Environment[k] = v
 			}
 
 			var allocatedIP string
 			var allocatedPort int
 
-			if tmpl.Container.Network != "" {
+			if container.Network != "" {
 				// Overlay mode - static IP
 				ip, err := ipPool.Allocate(serverID)
 				if err != nil {
@@ -144,15 +148,15 @@ func main() {
 					return
 				}
 				allocatedIP = ip
-				tmpl.Container.IP = ip
+				container.IP = ip
 
 				// Get port from template (default 5520)
 				allocatedPort = 5520
-				if len(tmpl.Container.Ports) > 0 {
-					allocatedPort = tmpl.Container.Ports[0].Container
+				if len(container.Ports) > 0 {
+					allocatedPort = container.Ports[0].Container
 				}
 
-				tmpl.Container.Environment["SERVER_HOST"] = ip
+				container.Environment["SERVER_HOST"] = ip
 				fmt.Printf("Overlay mode: %s -> %s:%d\n", serverID, ip, allocatedPort)
 			} else {
 				// Host mode - dynamic port
@@ -163,17 +167,17 @@ func main() {
 				}
 				allocatedPort = port
 
-				for i := range tmpl.Container.Ports {
-					tmpl.Container.Ports[i].Host = port
-					tmpl.Container.Ports[i].Container = port
+				for i := range container.Ports {
+					container.Ports[i].Host = port
+					container.Ports[i].Container = port
 				}
 
-				tmpl.Container.Environment["SERVER_HOST"] = "127.0.0.1"
+				container.Environment["SERVER_HOST"] = "127.0.0.1"
 				fmt.Printf("Host mode: %s -> 127.0.0.1:%d\n", serverID, port)
 			}
 
-			tmpl.Container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
-			tmpl.Container.Environment["SERVER_ID"] = serverID
+			container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
+			container.Environment["SERVER_ID"] = serverID
 
 			if tmpl.Hooks.PreStart != "" {
 				fmt.Println("Calling pre_start hook:", tmpl.Hooks.PreStart)
@@ -197,16 +201,16 @@ func main() {
 
 				// Merge into container env
 				for k, v := range hookResp.Env {
-					tmpl.Container.Environment[k] = v
+					container.Environment[k] = v
 				}
 			} else {
 				fmt.Println("No pre_start hook defined")
 			}
 
-			fmt.Println("Final environment:", tmpl.Container.Environment)
+			fmt.Println("Final environment:", container.Environment)
 
 			ctx := c.Request.Context()
-			server, err := provider.Allocate(ctx, tmpl.Container)
+			server, err := provider.Allocate(ctx, container)
 			if err != nil {
 				if allocatedIP != "" {
 					ipPool.Release(allocatedIP)
@@ -237,7 +241,7 @@ func main() {
 				return
 			}
 
-			c.JSON(201, nil)
+			c.Status(204)
 		})
 	}
 
@@ -319,7 +323,6 @@ func main() {
 					s.Metadata = updates.Metadata
 				}
 			})
-
 			if err != nil {
 				c.JSON(404, gin.H{"error": err.Error()})
 				return
@@ -333,7 +336,7 @@ func main() {
 			// unregister server
 			id := c.Param("id")
 			reg.Unregister(id)
-			c.JSON(204, nil)
+			c.Status(204)
 		})
 
 		registryGroup.PUT("/servers/:id/players", func(c *gin.Context) {
@@ -350,7 +353,6 @@ func main() {
 			err := reg.Update(serverID, func(s *registry.ServerInfo) {
 				s.Players = req.Players
 			})
-
 			if err != nil {
 				c.JSON(404, gin.H{"error": err.Error()})
 				return
@@ -388,7 +390,7 @@ func main() {
 				return
 			}
 
-			c.JSON(204, nil)
+			c.Status(204)
 		})
 	}
 
@@ -397,6 +399,27 @@ func main() {
 	if err != nil {
 		return
 	}
+}
+
+func deepCopyAllocateRequest(src orchestrator.AllocateRequest) orchestrator.AllocateRequest {
+	dst := src
+	if src.Environment != nil {
+		dst.Environment = make(map[string]string, len(src.Environment))
+		for k, v := range src.Environment {
+			dst.Environment[k] = v
+		}
+	}
+	if src.Ports != nil {
+		dst.Ports = make([]orchestrator.PortBinding, len(src.Ports))
+		copy(dst.Ports, src.Ports)
+	}
+	if src.Volumes != nil {
+		dst.Volumes = make(map[string]string, len(src.Volumes))
+		for k, v := range src.Volumes {
+			dst.Volumes[k] = v
+		}
+	}
+	return dst
 }
 
 // resolve returns first non-empty value: cli > env > fallback

@@ -13,7 +13,7 @@ container:
     SERVER_TYPE: "game"
     SERVER_MODE: "skywars"
     BANANAGINE_URL: "http://bananagine:3000"
-    BANANASPLIT_URL: "http://bananasplit:3000"
+    BANANASPLIT_URL: "http://bananasplit:3001"
     PEEL_URL: "http://peel:8080"
     PEEL_HOST: "10.0.40.104"
     PEEL_PORT: "5520"
@@ -22,4 +22,5 @@ server:
   mode: "skywars"
   max_players: 8
 hooks:
-  pre_start: "http://hytale-auth:3000/tokens"
+  pre_start: "http://hytale-auth:8081/tokens"
+
