@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/bananalabs-oss/bananagine/internal/ips"
 	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
+	"github.com/bananalabs-oss/potassium/config"
 	"github.com/bananalabs-oss/potassium/orchestrator"
 	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 	"github.com/bananalabs-oss/potassium/registry"
@@ -42,12 +41,12 @@ func main() {
 		PortStart    int
 		PortEnd      int
 	}{
-		ListenAddr:   resolve(*listenAddr, getEnv("LISTEN_ADDR", ""), ":3000"),
-		TemplatesDir: resolve(*templatesDir, getEnv("TEMPLATES_DIR", ""), "./templates"),
-		IPStart:      resolve(*ipStart, getEnv("IP_POOL_START", ""), "10.99.0.10"),
-		IPEnd:        resolve(*ipEnd, getEnv("IP_POOL_END", ""), "10.99.0.250"),
-		PortStart:    resolveInt(*portStart, getEnvInt("PORT_POOL_START", 0), 5521),
-		PortEnd:      resolveInt(*portEnd, getEnvInt("PORT_POOL_END", 0), 5599),
+		ListenAddr:   config.Resolve(*listenAddr, config.EnvOrDefault("LISTEN_ADDR", ""), ":3000"),
+		TemplatesDir: config.Resolve(*templatesDir, config.EnvOrDefault("TEMPLATES_DIR", ""), "./templates"),
+		IPStart:      config.Resolve(*ipStart, config.EnvOrDefault("IP_POOL_START", ""), "10.99.0.10"),
+		IPEnd:        config.Resolve(*ipEnd, config.EnvOrDefault("IP_POOL_END", ""), "10.99.0.250"),
+		PortStart:    config.ResolveInt(*portStart, config.EnvOrDefaultInt("PORT_POOL_START", 0), 5521),
+		PortEnd:      config.ResolveInt(*portEnd, config.EnvOrDefaultInt("PORT_POOL_END", 0), 5599),
 	}
 
 	// Log config
@@ -422,39 +421,3 @@ func deepCopyAllocateRequest(src orchestrator.AllocateRequest) orchestrator.Allo
 	return dst
 }
 
-// resolve returns first non-empty value: cli > env > fallback
-func resolve(cli, env, fallback string) string {
-	if cli != "" {
-		return cli
-	}
-	if env != "" {
-		return env
-	}
-	return fallback
-}
-
-func resolveInt(cli, env, fallback int) int {
-	if cli != 0 {
-		return cli
-	}
-	if env != 0 {
-		return env
-	}
-	return fallback
-}
-
-func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
