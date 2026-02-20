@@ -13,6 +13,7 @@ import (
 	"github.com/bananalabs-oss/bananagine/internal/template"
 	"github.com/bananalabs-oss/potassium/config"
 	"github.com/bananalabs-oss/potassium/orchestrator"
+	"github.com/bananalabs-oss/potassium/server"
 	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 	"github.com/bananalabs-oss/potassium/registry"
 	"github.com/gin-gonic/gin"
@@ -393,11 +394,7 @@ func main() {
 		})
 	}
 
-	fmt.Printf("Bananagine running on %s\n", config.ListenAddr)
-	err = r.Run(config.ListenAddr)
-	if err != nil {
-		return
-	}
+	server.ListenAndShutdown(config.ListenAddr, r, "Bananagine")
 }
 
 func deepCopyAllocateRequest(src orchestrator.AllocateRequest) orchestrator.AllocateRequest {
