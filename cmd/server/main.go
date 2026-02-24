@@ -16,6 +16,7 @@ import (
 	"github.com/bananalabs-oss/potassium/server"
 	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
 	"github.com/bananalabs-oss/potassium/registry"
+	"github.com/containerd/errdefs"
 	"github.com/gin-gonic/gin"
 )
 
@@ -100,12 +101,16 @@ func main() {
 		orchestration.GET("/servers/:id", func(c *gin.Context) {
 			ctx := c.Request.Context()
 			id := c.Param("id")
-			servers, err := provider.Get(ctx, id)
+			server, err := provider.Get(ctx, id)
 			if err != nil {
+				if errdefs.IsNotFound(err) {
+					c.JSON(404, gin.H{"error": "server not found"})
+					return
+				}
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(200, servers)
+			c.JSON(200, server)
 		})
 
 		orchestration.POST("/servers", func(c *gin.Context) {
@@ -224,6 +229,15 @@ func main() {
 			// Add metadata to response
 			server.Name = serverID
 
+			// Ensure allocated port is in response (overlay mode returns empty port map)
+			if server.Ports == nil {
+				server.Ports = map[string]int{}
+			}
+			portKey := fmt.Sprintf("%d", allocatedPort)
+			if _, ok := server.Ports[portKey]; !ok {
+				server.Ports[portKey] = allocatedPort
+			}
+
 			c.JSON(201, server)
 		})
 
@@ -242,6 +256,23 @@ func main() {
 			}
 
 			c.Status(204)
+		})
+
+		orchestration.POST("/servers/:id/restart", func(c *gin.Context) {
+			ctx := c.Request.Context()
+			id := c.Param("id")
+
+			err := provider.Restart(ctx, id)
+			if err != nil {
+				if errdefs.IsNotFound(err) {
+					c.JSON(404, gin.H{"error": "server not found"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(200, gin.H{"status": "restarted"})
 		})
 	}
 
