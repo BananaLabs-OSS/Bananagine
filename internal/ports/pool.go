@@ -52,3 +52,22 @@ func (p *Pool) ReleaseByServer(serverID string) {
 		}
 	}
 }
+
+func (p *Pool) ReKey(oldID, newID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for port, id := range p.allocated {
+		if id == oldID {
+			p.allocated[port] = newID
+			return
+		}
+	}
+}
+
+func (p *Pool) Reserve(port int, serverID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.allocated[port] = serverID
+}
