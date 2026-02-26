@@ -63,6 +63,25 @@ func (p *Pool) ReleaseByServer(serverID string) {
 	}
 }
 
+func (p *Pool) ReKey(oldID, newID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for ip, id := range p.allocated {
+		if id == oldID {
+			p.allocated[ip] = newID
+			return
+		}
+	}
+}
+
+func (p *Pool) Reserve(ip string, serverID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.allocated[ip] = serverID
+}
+
 func incIP(ip net.IP) {
 	for i := len(ip) - 1; i >= 0; i-- {
 		ip[i]++

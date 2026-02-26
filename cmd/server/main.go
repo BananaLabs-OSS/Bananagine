@@ -244,6 +244,13 @@ func main() {
 				return
 			}
 
+			// Re-key pool allocation from serverID to container ID so DELETE can release it
+			if allocatedIP != "" {
+				ipPool.ReKey(serverID, server.ID)
+			} else {
+				portPool.ReKey(serverID, server.ID)
+			}
+
 			// Add metadata to response
 			server.Name = serverID
 
