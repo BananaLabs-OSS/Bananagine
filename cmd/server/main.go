@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -78,6 +79,21 @@ func main() {
 
 	ipPool := ips.NewPool(config.IPStart, config.IPEnd)
 	portPool := ports.NewPool(config.PortStart, config.PortEnd)
+
+	// Reconcile pools with already-running containers
+	if existing, err := provider.List(context.Background(), nil); err == nil {
+		for _, s := range existing {
+			for _, p := range s.Ports {
+				portPool.Reserve(p, s.ID)
+			}
+			if s.IP != "" {
+				ipPool.Reserve(s.IP, s.ID)
+			}
+		}
+		if len(existing) > 0 {
+			fmt.Printf("Reconciled %d existing containers into pools\n", len(existing))
+		}
+	}
 
 	reg, err := registry.New()
 	if err != nil {
