@@ -53,9 +53,11 @@ bananagine:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| `GET` | `/health` | Service health check |
 | `GET` | `/orchestration/servers` | List running containers |
 | `GET` | `/orchestration/servers/:id` | Get container details |
 | `POST` | `/orchestration/servers` | Create server from template |
+| `POST` | `/orchestration/servers/:id/restart` | Restart container |
 | `DELETE` | `/orchestration/servers/:id` | Destroy container |
 
 **Create Server:**
@@ -157,6 +159,10 @@ hooks:
 | `SERVER_ID` | Unique server identifier |
 | `SERVER_HOST` | IP address |
 | `SERVER_PORT` | Port number |
+
+## Startup Behavior
+
+On startup, Bananagine reconciles its in-memory port and IP pools with already-running containers. This prevents bind conflicts after a restart when containers from a previous run are still active.
 
 ## Dependencies
 
