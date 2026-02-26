@@ -2,7 +2,6 @@ module github.com/bananalabs-oss/bananagine
 
 go 1.25.6
 
-
 require (
 	github.com/bananalabs-oss/potassium v0.8.0
 	github.com/containerd/errdefs v1.0.0
