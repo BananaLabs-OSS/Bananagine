@@ -21,7 +21,12 @@ import (
 )
 
 type CreateServerRequest struct {
-	Template string `json:"template"`
+	Template  string            `json:"template"`
+	Env       map[string]string `json:"env,omitempty"`
+	Resources struct {
+		MemoryLimit int64 `json:"memory_limit,omitempty"`
+		CPUCount    int   `json:"cpu_count,omitempty"`
+	} `json:"resources,omitempty"`
 }
 
 func main() {
@@ -210,6 +215,19 @@ func main() {
 				}
 			} else {
 				fmt.Println("No pre_start hook defined")
+			}
+
+			// Merge caller env (last wins)
+			for k, v := range req.Env {
+				container.Environment[k] = v
+			}
+
+			// Wire resource limits from request
+			if req.Resources.MemoryLimit > 0 {
+				container.MemoryLimit = req.Resources.MemoryLimit
+			}
+			if req.Resources.CPUCount > 0 {
+				container.CPUCount = req.Resources.CPUCount
 			}
 
 			fmt.Println("Final environment:", container.Environment)
