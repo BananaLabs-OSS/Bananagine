@@ -38,6 +38,7 @@ func main() {
 	ipEnd := flag.String("ip-end", "", "IP pool end (default 10.99.0.250)")
 	portStart := flag.Int("port-start", 0, "Port pool start (default 5521)")
 	portEnd := flag.Int("port-end", 0, "Port pool end (default 5599)")
+	externalHost := flag.String("external-host", "", "External host address for host-mode containers")
 	flag.Parse()
 
 	// Resolve: CLI > Env > Default
@@ -48,6 +49,7 @@ func main() {
 		IPEnd        string
 		PortStart    int
 		PortEnd      int
+		ExternalHost string
 	}{
 		ListenAddr:   config.Resolve(*listenAddr, config.EnvOrDefault("LISTEN_ADDR", ""), ":3000"),
 		TemplatesDir: config.Resolve(*templatesDir, config.EnvOrDefault("TEMPLATES_DIR", ""), "./templates"),
@@ -55,6 +57,7 @@ func main() {
 		IPEnd:        config.Resolve(*ipEnd, config.EnvOrDefault("IP_POOL_END", ""), "10.99.0.250"),
 		PortStart:    config.ResolveInt(*portStart, config.EnvOrDefaultInt("PORT_POOL_START", 0), 5521),
 		PortEnd:      config.ResolveInt(*portEnd, config.EnvOrDefaultInt("PORT_POOL_END", 0), 5599),
+		ExternalHost: config.Resolve(*externalHost, config.EnvOrDefault("EXTERNAL_HOST", ""), ""),
 	}
 
 	// Log config
@@ -62,6 +65,9 @@ func main() {
 	fmt.Printf("Templates: %s\n", config.TemplatesDir)
 	fmt.Printf("IP pool: %s - %s\n", config.IPStart, config.IPEnd)
 	fmt.Printf("Port pool: %d - %d\n", config.PortStart, config.PortEnd)
+	if config.ExternalHost != "" {
+		fmt.Printf("External host: %s\n", config.ExternalHost)
+	}
 
 	// Load templates at startup
 	templates, err := template.LoadTemplates(config.TemplatesDir)
@@ -198,8 +204,8 @@ func main() {
 					container.Ports[i].Container = port
 				}
 
-				container.Environment["SERVER_HOST"] = "127.0.0.1"
-				fmt.Printf("Host mode: %s -> 127.0.0.1:%d\n", serverID, port)
+				container.Environment["SERVER_HOST"] = "0.0.0.0"
+				fmt.Printf("Host mode: %s -> 0.0.0.0:%d\n", serverID, port)
 			}
 
 			container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
@@ -277,6 +283,11 @@ func main() {
 			portKey := fmt.Sprintf("%d", allocatedPort)
 			if _, ok := server.Ports[portKey]; !ok {
 				server.Ports[portKey] = allocatedPort
+			}
+
+			// Override IP with external host when configured (host-mode hosting)
+			if config.ExternalHost != "" {
+				server.IP = config.ExternalHost
 			}
 
 			c.JSON(201, server)
