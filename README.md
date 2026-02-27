@@ -28,6 +28,7 @@ Configuration priority: CLI flags > Environment variables > Defaults
 | IP pool end | `IP_POOL_END` | `-ip-end` | `10.99.0.250` |
 | Port pool start | `PORT_POOL_START` | `-port-start` | `5521` |
 | Port pool end | `PORT_POOL_END` | `-port-end` | `5599` |
+| External host | `EXTERNAL_HOST` | `-external-host` | _(empty)_ |
 
 **CLI:**
 ```bash
@@ -149,8 +150,10 @@ hooks:
 
 | Mode | Network Field | Allocation | SERVER_HOST |
 |------|---------------|------------|-------------|
-| Host | absent | Port pool (5521-5599) | 127.0.0.1 |
+| Host | absent | Port pool (5521-5599) | 0.0.0.0 |
 | Overlay | present | IP pool (10.99.0.10-250) | allocated IP |
+
+When `EXTERNAL_HOST` is set, the returned `server.IP` is overridden with that value. This lets hosting services (e.g. Sessions.gg) return the public IP that players connect to. When unset, the native Docker IP is returned for overlay/container networking.
 
 ### Injected Environment Variables
 
