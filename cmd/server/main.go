@@ -1,12 +1,17 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bananalabs-oss/bananagine/internal/ips"
@@ -160,6 +165,15 @@ func main() {
 
 			// Generate server ID
 			serverID := fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
+
+			// Expand volume path templates (e.g. {{SERVER_ID}})
+			for hostPath, containerPath := range container.Volumes {
+				if strings.Contains(hostPath, "{{SERVER_ID}}") {
+					expanded := strings.ReplaceAll(hostPath, "{{SERVER_ID}}", serverID)
+					delete(container.Volumes, hostPath)
+					container.Volumes[expanded] = containerPath
+				}
+			}
 
 			// Merge server config into environment
 			if container.Environment == nil {
@@ -325,6 +339,46 @@ func main() {
 			}
 
 			c.JSON(200, gin.H{"status": "restarted"})
+		})
+
+		// GET /orchestration/worlds/:name - zip and stream a server's world data
+		orchestration.GET("/worlds/:name", func(c *gin.Context) {
+			name := c.Param("name")
+			worldsBase := os.Getenv("WORLDS_DIR")
+		if worldsBase == "" {
+			worldsBase = "/var/sessions/worlds"
+		}
+		worldDir := filepath.Join(worldsBase, name)
+
+			info, err := os.Stat(worldDir)
+			if err != nil || !info.IsDir() {
+				c.JSON(404, gin.H{"error": "world not found"})
+				return
+			}
+
+			c.Header("Content-Type", "application/zip")
+			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.zip", name))
+
+			zw := zip.NewWriter(c.Writer)
+			defer zw.Close()
+
+			filepath.Walk(worldDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil || info.IsDir() {
+					return err
+				}
+				rel, _ := filepath.Rel(worldDir, path)
+				w, err := zw.Create(rel)
+				if err != nil {
+					return err
+				}
+				f, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				_, err = io.Copy(w, f)
+				return err
+			})
 		})
 	}
 
