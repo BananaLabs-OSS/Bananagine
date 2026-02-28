@@ -29,6 +29,7 @@ Configuration priority: CLI flags > Environment variables > Defaults
 | Port pool start | `PORT_POOL_START` | `-port-start` | `5521` |
 | Port pool end | `PORT_POOL_END` | `-port-end` | `5599` |
 | External host | `EXTERNAL_HOST` | `-external-host` | _(empty)_ |
+| Worlds directory | `WORLDS_DIR` | — | `/var/sessions/worlds` |
 
 **CLI:**
 ```bash
@@ -60,6 +61,7 @@ bananagine:
 | `POST` | `/orchestration/servers` | Create server from template |
 | `POST` | `/orchestration/servers/:id/restart` | Restart container |
 | `DELETE` | `/orchestration/servers/:id` | Destroy container |
+| `GET` | `/orchestration/worlds/:name` | Zip and stream a server's world data |
 
 **Create Server:**
 ```json
@@ -154,6 +156,17 @@ hooks:
 | Overlay | present | IP pool (10.99.0.10-250) | allocated IP |
 
 When `EXTERNAL_HOST` is set, the returned `server.IP` is overridden with that value. This lets hosting services (e.g. Sessions.gg) return the public IP that players connect to. When unset, the native Docker IP is returned for overlay/container networking.
+
+### Volume Templating
+
+Volume host paths support `{{SERVER_ID}}` expansion. This gives each server its own bind mount:
+
+```yaml
+volumes:
+  "/var/sessions/worlds/{{SERVER_ID}}": "/data/world"
+```
+
+The world archive endpoint (`GET /orchestration/worlds/:name`) zips the contents of `WORLDS_DIR/:name/` and streams it as a download. This is used by Evolution to archive worlds to R2 on server expiry.
 
 ### Injected Environment Variables
 
