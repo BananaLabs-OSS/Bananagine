@@ -1,0 +1,19 @@
+name: paper-1.21
+container:
+  image: paper-server:1.21
+  ports:
+    - host: 0
+      container: 25565
+      protocol: tcp
+  volumes:
+    "/mnt/c/temp/sessions-worlds/{{SERVER_ID}}": "/data/world"
+  memory_limit: 3221225472
+  cpu_count: 1
+  environment:
+    MEMORY: "2G"
+    GAMEMODE: "survival"
+    DIFFICULTY: "normal"
+    PVP: "true"
+    HARDCORE: "false"
+    WORLD_TYPE: "normal"
+    MOTD: "A Sessions Server"
