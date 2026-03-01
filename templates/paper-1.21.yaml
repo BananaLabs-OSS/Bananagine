@@ -1,0 +1,67 @@
+# Example: Paper Minecraft 1.21 template
+# Demonstrates how to define a game server template for Bananagine.
+# Requires a compatible paper-server Docker image.
+
+name: paper-1.21
+game: minecraft
+label: Paper 1.21
+container:
+  image: paper-server:1.21
+  ports:
+    - host: 0
+      container: 25565
+      protocol: tcp
+      name: java
+    - host: 0
+      container: 19132
+      protocol: udp
+      name: bedrock
+  volumes:
+    "/var/worlds/{{SERVER_ID}}": "/data/world"
+  memory_limit: 3221225472
+  cpu_limit: 0.33
+  environment:
+    MEMORY: "2G"
+    GAMEMODE: "survival"
+    DIFFICULTY: "normal"
+    PVP: "true"
+    HARDCORE: "false"
+    WORLD_TYPE: "normal"
+    MOTD: "A Minecraft Server"
+
+config:
+  settings:
+    gamemode:
+      type: enum
+      default: survival
+      label: Gamemode
+      options: [survival, creative, adventure, spectator]
+    difficulty:
+      type: enum
+      default: normal
+      label: Difficulty
+      options: [peaceful, easy, normal, hard]
+    pvp:
+      type: bool
+      default: true
+      label: PVP
+      hint: Players can damage each other
+    hardcore:
+      type: bool
+      default: false
+      label: Hardcore
+      hint: Death is permanent. No respawning.
+    world_type:
+      type: enum
+      default: normal
+      label: World Type
+      options: [normal, flat, large_biomes, amplified]
+    seed:
+      type: string
+      default: ""
+      label: Seed
+      hint: Leave blank for random
+    motd:
+      type: string
+      default: "A Minecraft Server"
+      label: Server Message
