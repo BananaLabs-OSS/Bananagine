@@ -6,7 +6,7 @@ container:
       container: 25565
       protocol: tcp
   volumes:
-    "/mnt/c/temp/sessions-worlds/{{SERVER_ID}}": "/data/world"
+    "/var/sessions/worlds/{{SERVER_ID}}": "/data/world"
   memory_limit: 3221225472
   cpu_count: 1
   environment:
