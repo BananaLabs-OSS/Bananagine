@@ -345,10 +345,10 @@ func main() {
 		orchestration.GET("/worlds/:name", func(c *gin.Context) {
 			name := c.Param("name")
 			worldsBase := os.Getenv("WORLDS_DIR")
-		if worldsBase == "" {
-			worldsBase = "/var/sessions/worlds"
-		}
-		worldDir := filepath.Join(worldsBase, name)
+			if worldsBase == "" {
+				worldsBase = "/var/sessions/worlds"
+			}
+			worldDir := filepath.Join(worldsBase, name)
 
 			info, err := os.Stat(worldDir)
 			if err != nil || !info.IsDir() {
@@ -367,6 +367,7 @@ func main() {
 					return err
 				}
 				rel, _ := filepath.Rel(worldDir, path)
+				rel = filepath.ToSlash(rel) // Ensure forward slashes for Linux containers
 				w, err := zw.Create(rel)
 				if err != nil {
 					return err
