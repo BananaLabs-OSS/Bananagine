@@ -5,6 +5,11 @@ container:
     - host: 0
       container: 25565
       protocol: tcp
+      name: java
+    - host: 0
+      container: 19132
+      protocol: udp
+      name: bedrock
   volumes:
     "/var/sessions/worlds/{{SERVER_ID}}": "/data/world"
   memory_limit: 3221225472
@@ -17,3 +22,4 @@ container:
     HARDCORE: "false"
     WORLD_TYPE: "normal"
     MOTD: "A Sessions Server"
+    PLUGINS: "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot,https://hangar.papermc.io/api/v1/projects/ViaVersion/versions/5.7.2/PAPER/download,https://hangar.papermc.io/api/v1/projects/ViaBackwards/versions/5.7.2/PAPER/download"
