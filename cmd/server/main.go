@@ -203,23 +203,42 @@ func main() {
 				}
 
 				container.Environment["SERVER_HOST"] = ip
+
+				// Inject PORT_{NAME} env vars for named ports (overlay uses container port)
+				for _, p := range container.Ports {
+					if p.Name != "" {
+						key := "PORT_" + strings.ToUpper(p.Name)
+						container.Environment[key] = fmt.Sprintf("%d", p.Container)
+					}
+				}
+
 				fmt.Printf("Overlay mode: %s -> %s:%d\n", serverID, ip, allocatedPort)
 			} else {
-				// Host mode - dynamic port
-				port, err := portPool.Allocate(serverID)
+				// Host mode - dynamic port, allocate one per binding
+				n := max(len(container.Ports), 1)
+				allocatedPorts, err := portPool.AllocateN(n, serverID)
 				if err != nil {
 					c.JSON(503, gin.H{"error": err.Error()})
 					return
 				}
-				allocatedPort = port
+				allocatedPort = allocatedPorts[0]
 
 				for i := range container.Ports {
-					container.Ports[i].Host = port
-					container.Ports[i].Container = port
+					container.Ports[i].Host = allocatedPorts[i]
+					container.Ports[i].Container = allocatedPorts[i]
 				}
 
 				container.Environment["SERVER_HOST"] = "0.0.0.0"
-				fmt.Printf("Host mode: %s -> 0.0.0.0:%d\n", serverID, port)
+
+				// Inject PORT_{NAME} env vars for named ports
+				for i, p := range container.Ports {
+					if p.Name != "" {
+						key := "PORT_" + strings.ToUpper(p.Name)
+						container.Environment[key] = fmt.Sprintf("%d", allocatedPorts[i])
+					}
+				}
+
+				fmt.Printf("Host mode: %s -> 0.0.0.0:%d\n", serverID, allocatedPort)
 			}
 
 			container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
@@ -274,7 +293,7 @@ func main() {
 				if allocatedIP != "" {
 					ipPool.Release(allocatedIP)
 				} else {
-					portPool.Release(allocatedPort)
+					portPool.ReleaseByServer(serverID)
 				}
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
@@ -290,13 +309,22 @@ func main() {
 			// Add metadata to response
 			server.Name = serverID
 
-			// Ensure allocated port is in response (overlay mode returns empty port map)
+			// Ensure all allocated ports are in response
 			if server.Ports == nil {
 				server.Ports = map[string]int{}
 			}
-			portKey := fmt.Sprintf("%d", allocatedPort)
-			if _, ok := server.Ports[portKey]; !ok {
-				server.Ports[portKey] = allocatedPort
+			if len(container.Ports) > 0 {
+				for _, p := range container.Ports {
+					portKey := fmt.Sprintf("%d", p.Container)
+					if _, ok := server.Ports[portKey]; !ok {
+						server.Ports[portKey] = p.Host
+					}
+				}
+			} else {
+				portKey := fmt.Sprintf("%d", allocatedPort)
+				if _, ok := server.Ports[portKey]; !ok {
+					server.Ports[portKey] = allocatedPort
+				}
 			}
 
 			// Override IP with external host when configured (host-mode hosting)
