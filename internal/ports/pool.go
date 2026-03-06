@@ -38,7 +38,15 @@ func (p *Pool) AllocateN(n int, serverID string) ([]int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// First, reuse ports already allocated to this serverID
 	var result []int
+	for port := p.start; port <= p.end && len(result) < n; port++ {
+		if owner, used := p.allocated[port]; used && owner == serverID {
+			result = append(result, port)
+		}
+	}
+
+	// Then fill remaining from free ports
 	for port := p.start; port <= p.end && len(result) < n; port++ {
 		if _, used := p.allocated[port]; !used {
 			result = append(result, port)

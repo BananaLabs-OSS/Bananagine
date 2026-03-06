@@ -2,8 +2,9 @@ module github.com/bananalabs-oss/bananagine
 
 go 1.25.6
 
+
 require (
-	github.com/bananalabs-oss/potassium v0.8.2-0.20260303195148-1951c37fb6a5
+	github.com/bananalabs-oss/potassium v0.8.2
 	github.com/containerd/errdefs v1.0.0
 	github.com/gin-gonic/gin v1.11.0
 	gopkg.in/yaml.v3 v3.0.1

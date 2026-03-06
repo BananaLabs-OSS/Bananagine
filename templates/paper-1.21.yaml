@@ -13,7 +13,7 @@ container:
   volumes:
     "/var/sessions/worlds/{{SERVER_ID}}": "/data/world"
   memory_limit: 3221225472
-  cpu_count: 1
+  cpu_limit: 0.33
   environment:
     MEMORY: "2G"
     GAMEMODE: "survival"
@@ -23,3 +23,74 @@ container:
     WORLD_TYPE: "normal"
     MOTD: "A Sessions Server"
     PLUGINS: "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot,https://hangar.papermc.io/api/v1/projects/ViaVersion/versions/5.7.2/PAPER/download,https://hangar.papermc.io/api/v1/projects/ViaBackwards/versions/5.7.2/PAPER/download"
+
+config:
+  settings:
+    gamemode:
+      type: enum
+      default: survival
+      label: Gamemode
+      options: [survival, creative, adventure, spectator]
+    difficulty:
+      type: enum
+      default: normal
+      label: Difficulty
+      options: [peaceful, easy, normal, hard]
+    pvp:
+      type: bool
+      default: true
+      label: PVP
+      hint: Players can damage each other
+    hardcore:
+      type: bool
+      default: false
+      label: Hardcore
+      hint: Death is permanent. No respawning.
+    world_type:
+      type: enum
+      default: normal
+      label: World Type
+      options: [normal, flat, large_biomes, amplified]
+    seed:
+      type: string
+      default: ""
+      label: Seed
+      hint: Leave blank for random
+    motd:
+      type: string
+      default: "A Sessions Server"
+      label: Server Message
+  game_rules:
+    keep_inventory:
+      type: bool
+      default: false
+      label: Keep Inventory
+    mob_griefing:
+      type: bool
+      default: true
+      label: Mob Griefing
+    advance_time:
+      type: bool
+      default: true
+      label: Daylight Cycle
+    advance_weather:
+      type: bool
+      default: true
+      label: Weather Cycle
+    spawn_phantoms:
+      type: bool
+      default: false
+      label: Phantoms
+    players_sleeping_percentage:
+      type: int
+      default: 100
+      label: One Player Sleep
+      hint: "0 = one player sleep, 100 = all must sleep"
+    show_death_messages:
+      type: bool
+      default: true
+      label: Death Messages
+    show_advancement_messages:
+      type: bool
+      default: true
+      label: Announce Advancements
