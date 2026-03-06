@@ -28,10 +28,11 @@ import (
 
 type CreateServerRequest struct {
 	Template  string            `json:"template"`
+	ServerID  string            `json:"server_id,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	Resources struct {
-		MemoryLimit int64 `json:"memory_limit,omitempty"`
-		CPUCount    int   `json:"cpu_count,omitempty"`
+		MemoryLimit int64   `json:"memory_limit,omitempty"`
+		CPULimit    float64 `json:"cpu_limit,omitempty"`
 	} `json:"resources,omitempty"`
 }
 
@@ -117,6 +118,17 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
+	// Template config endpoint
+	r.GET("/templates/:name/config", func(c *gin.Context) {
+		name := c.Param("name")
+		tmpl, ok := templates[name]
+		if !ok {
+			c.JSON(404, gin.H{"error": "template not found"})
+			return
+		}
+		c.JSON(200, tmpl.Config)
+	})
+
 	// Orchestration routes
 	orchestration := r.Group("/orchestration")
 	{
@@ -163,8 +175,11 @@ func main() {
 			// Deep copy so we don't mutate the original template
 			container := deepCopyAllocateRequest(tmpl.Container)
 
-			// Generate server ID
-			serverID := fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
+			// Use provided server ID or generate one
+			serverID := req.ServerID
+			if serverID == "" {
+				serverID = fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
+			}
 
 			// Expand volume path templates (e.g. {{SERVER_ID}})
 			for hostPath, containerPath := range container.Volumes {
@@ -281,8 +296,8 @@ func main() {
 			if req.Resources.MemoryLimit > 0 {
 				container.MemoryLimit = req.Resources.MemoryLimit
 			}
-			if req.Resources.CPUCount > 0 {
-				container.CPUCount = req.Resources.CPUCount
+			if req.Resources.CPULimit > 0 {
+				container.CPULimit = req.Resources.CPULimit
 			}
 
 			fmt.Println("Final environment:", container.Environment)
@@ -315,7 +330,10 @@ func main() {
 			}
 			if len(container.Ports) > 0 {
 				for _, p := range container.Ports {
-					portKey := fmt.Sprintf("%d", p.Container)
+					portKey := p.Name
+					if portKey == "" {
+						portKey = fmt.Sprintf("%d", p.Container)
+					}
 					if _, ok := server.Ports[portKey]; !ok {
 						server.Ports[portKey] = p.Host
 					}
@@ -339,9 +357,15 @@ func main() {
 			ctx := c.Request.Context()
 			id := c.Param("id")
 
-			// Release from both pools (only one will match)
-			portPool.ReleaseByServer(id)
-			ipPool.ReleaseByServer(id)
+			// keep_ports=1 preserves port reservations (for recreate)
+			if c.Query("keep_ports") != "1" {
+				portPool.ReleaseByServer(id)
+				ipPool.ReleaseByServer(id)
+			} else if newID := c.Query("server_id"); newID != "" {
+				// Re-key ports to the new server ID so AllocateN can find them
+				portPool.ReKey(id, newID)
+				ipPool.ReKey(id, newID)
+			}
 
 			err := provider.Deallocate(ctx, id)
 			if err != nil {
@@ -367,6 +391,35 @@ func main() {
 			}
 
 			c.JSON(200, gin.H{"status": "restarted"})
+		})
+
+		orchestration.POST("/servers/:id/exec", func(c *gin.Context) {
+			ctx := c.Request.Context()
+			id := c.Param("id")
+
+			var req struct {
+				Cmd []string `json:"cmd"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			if len(req.Cmd) == 0 {
+				c.JSON(400, gin.H{"error": "cmd is required"})
+				return
+			}
+
+			output, err := provider.Exec(ctx, id, req.Cmd)
+			if err != nil {
+				if errdefs.IsNotFound(err) {
+					c.JSON(404, gin.H{"error": "server not found"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(200, gin.H{"output": output})
 		})
 
 		// GET /orchestration/worlds/:name - zip and stream a server's world data
