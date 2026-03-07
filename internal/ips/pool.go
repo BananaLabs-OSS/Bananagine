@@ -15,13 +15,23 @@ type Pool struct {
 }
 
 func NewPool(start, end string) *Pool {
-	startIP := net.ParseIP(start).To4()
+	startIP := net.ParseIP(start)
+	if startIP == nil {
+		panic(fmt.Sprintf("invalid IP pool start: %q", start))
+	}
+	startIP = startIP.To4()
+
+	endIP := net.ParseIP(end)
+	if endIP == nil {
+		panic(fmt.Sprintf("invalid IP pool end: %q", end))
+	}
+
 	current := make(net.IP, len(startIP))
 	copy(current, startIP)
 
 	return &Pool{
 		start:     startIP,
-		end:       net.ParseIP(end).To4(),
+		end:       endIP.To4(),
 		current:   current,
 		allocated: make(map[string]string),
 	}
@@ -70,7 +80,6 @@ func (p *Pool) ReKey(oldID, newID string) {
 	for ip, id := range p.allocated {
 		if id == oldID {
 			p.allocated[ip] = newID
-			return
 		}
 	}
 }

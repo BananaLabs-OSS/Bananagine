@@ -1,6 +1,7 @@
 package template
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
@@ -27,6 +28,8 @@ type ConfigSchema struct {
 
 type Template struct {
 	Name      string                       `yaml:"name"`
+	Game      string                       `yaml:"game" json:"game"`
+	Label     string                       `yaml:"label" json:"label"`
 	Container orchestrator.AllocateRequest `yaml:"container"`
 	Server    map[string]string            `yaml:"server"`
 	Hooks     Hooks                        `yaml:"hooks"`
@@ -54,7 +57,14 @@ func LoadTemplates(dir string) (map[string]Template, error) {
 
 		// Parse into a template
 		var t Template
-		err = yaml.Unmarshal(data, &t)
+		if err = yaml.Unmarshal(data, &t); err != nil {
+			log.Printf("Failed to parse template %s: %v", file.Name(), err)
+			continue
+		}
+		if t.Name == "" {
+			log.Printf("Template %s has no name, skipping", file.Name())
+			continue
+		}
 
 		// store in map by name
 		templates[t.Name] = t
