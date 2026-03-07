@@ -1,4 +1,6 @@
 name: hytale-lobby
+game: hytale
+label: Lobby
 container:
   image: localhost/lobby-server
   network: hycraft-server_banananet

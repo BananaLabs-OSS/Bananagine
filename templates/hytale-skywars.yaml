@@ -1,4 +1,6 @@
 name: hytale-skywars
+game: hytale
+label: Skywars
 container:
   image: localhost/skywars-server
   network: hycraft-server_banananet
