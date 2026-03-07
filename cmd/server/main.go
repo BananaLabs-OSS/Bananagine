@@ -118,6 +118,24 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
+	// List all loaded templates with game and label metadata
+	type templateInfo struct {
+		Name  string `json:"name"`
+		Game  string `json:"game"`
+		Label string `json:"label"`
+	}
+	r.GET("/templates", func(c *gin.Context) {
+		result := make([]templateInfo, 0, len(templates))
+		for _, t := range templates {
+			result = append(result, templateInfo{
+				Name:  t.Name,
+				Game:  t.Game,
+				Label: t.Label,
+			})
+		}
+		c.JSON(200, result)
+	})
+
 	// Template config endpoint
 	r.GET("/templates/:name/config", func(c *gin.Context) {
 		name := c.Param("name")
@@ -182,12 +200,16 @@ func main() {
 			}
 
 			// Expand volume path templates (e.g. {{SERVER_ID}})
+			// Collect changes first to avoid modifying map during iteration
+			var volumeExpansions [][2]string
 			for hostPath, containerPath := range container.Volumes {
 				if strings.Contains(hostPath, "{{SERVER_ID}}") {
-					expanded := strings.ReplaceAll(hostPath, "{{SERVER_ID}}", serverID)
-					delete(container.Volumes, hostPath)
-					container.Volumes[expanded] = containerPath
+					volumeExpansions = append(volumeExpansions, [2]string{hostPath, containerPath})
 				}
+			}
+			for _, exp := range volumeExpansions {
+				delete(container.Volumes, exp[0])
+				container.Volumes[strings.ReplaceAll(exp[0], "{{SERVER_ID}}", serverID)] = exp[1]
 			}
 
 			// Merge server config into environment
@@ -266,16 +288,43 @@ func main() {
 				resp, err := http.Get(tmpl.Hooks.PreStart)
 				if err != nil {
 					fmt.Println("Hook error:", err)
+					// Release allocated resources before returning
+					if allocatedIP != "" {
+						ipPool.Release(allocatedIP)
+					} else {
+						portPool.ReleaseByServer(serverID)
+					}
 					c.JSON(500, gin.H{"error": "hook failed: " + err.Error()})
 					return
 				}
 				defer resp.Body.Close()
 
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					fmt.Printf("Hook returned status %d\n", resp.StatusCode)
+					if allocatedIP != "" {
+						ipPool.Release(allocatedIP)
+					} else {
+						portPool.ReleaseByServer(serverID)
+					}
+					c.JSON(500, gin.H{"error": fmt.Sprintf("hook returned %d", resp.StatusCode)})
+					return
+				}
+
 				// Parse response
 				var hookResp struct {
 					Env map[string]string `json:"env"`
 				}
-				json.NewDecoder(resp.Body).Decode(&hookResp)
+				if err := json.NewDecoder(resp.Body).Decode(&hookResp); err != nil {
+					fmt.Println("Hook response decode error:", err)
+					// Release allocated resources before returning
+					if allocatedIP != "" {
+						ipPool.Release(allocatedIP)
+					} else {
+						portPool.ReleaseByServer(serverID)
+					}
+					c.JSON(500, gin.H{"error": "hook response decode failed: " + err.Error()})
+					return
+				}
 
 				fmt.Println("Hook returned env vars:", hookResp.Env)
 
@@ -443,11 +492,14 @@ func main() {
 			zw := zip.NewWriter(c.Writer)
 			defer zw.Close()
 
-			filepath.Walk(worldDir, func(path string, info os.FileInfo, err error) error {
+			if err := filepath.Walk(worldDir, func(path string, info os.FileInfo, err error) error {
 				if err != nil || info.IsDir() {
 					return err
 				}
-				rel, _ := filepath.Rel(worldDir, path)
+				rel, err := filepath.Rel(worldDir, path)
+				if err != nil {
+					return err
+				}
 				rel = filepath.ToSlash(rel) // Ensure forward slashes for Linux containers
 				w, err := zw.Create(rel)
 				if err != nil {
@@ -460,7 +512,9 @@ func main() {
 				defer f.Close()
 				_, err = io.Copy(w, f)
 				return err
-			})
+			}); err != nil {
+				log.Printf("Error walking world directory %s: %v", worldDir, err)
+			}
 		})
 	}
 
