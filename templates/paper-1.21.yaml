@@ -1,4 +1,6 @@
 name: paper-1.21
+game: minecraft
+label: Paper 1.21
 container:
   image: paper-server:1.21
   ports:
