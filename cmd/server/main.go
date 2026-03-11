@@ -516,6 +516,31 @@ func main() {
 				log.Printf("Error walking world directory %s: %v", worldDir, err)
 			}
 		})
+
+		// DELETE /orchestration/worlds/:name - remove a server's world data from disk
+		orchestration.DELETE("/worlds/:name", func(c *gin.Context) {
+			name := c.Param("name")
+			worldsBase := os.Getenv("WORLDS_DIR")
+			if worldsBase == "" {
+				worldsBase = "/var/sessions/worlds"
+			}
+			worldDir := filepath.Join(worldsBase, name)
+
+			// Safety: ensure the resolved path is under worldsBase
+			absWorld, _ := filepath.Abs(worldDir)
+			absBase, _ := filepath.Abs(worldsBase)
+			if !strings.HasPrefix(absWorld, absBase+string(filepath.Separator)) {
+				c.JSON(400, gin.H{"error": "invalid world name"})
+				return
+			}
+
+			if err := os.RemoveAll(worldDir); err != nil {
+				c.JSON(500, gin.H{"error": "failed to remove world: " + err.Error()})
+				return
+			}
+
+			c.Status(204)
+		})
 	}
 
 	// Registry routes
