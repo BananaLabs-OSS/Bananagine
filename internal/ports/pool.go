@@ -99,3 +99,98 @@ func (p *Pool) Reserve(port int, serverID string) {
 
 	p.allocated[port] = serverID
 }
+
+// Contains returns true if the port falls within this pool's range.
+func (p *Pool) Contains(port int) bool {
+	return port >= p.start && port <= p.end
+}
+
+// PoolSet manages multiple port pools keyed by range string (e.g. "25565-25599").
+// Falls back to a default pool for ports without a range.
+type PoolSet struct {
+	mu       sync.Mutex
+	fallback *Pool
+	pools    map[string]*Pool // "start-end" → pool
+}
+
+func NewPoolSet(fallback *Pool) *PoolSet {
+	return &PoolSet{
+		fallback: fallback,
+		pools:    make(map[string]*Pool),
+	}
+}
+
+// ParseRange parses a range string like "25565-25599" into start and end.
+func ParseRange(r string) (int, int, error) {
+	var start, end int
+	_, err := fmt.Sscanf(r, "%d-%d", &start, &end)
+	if err != nil || start > end {
+		return 0, 0, fmt.Errorf("invalid port range: %q", r)
+	}
+	return start, end, nil
+}
+
+// getOrCreate returns the pool for a range string, creating it if needed.
+func (ps *PoolSet) getOrCreate(rangeStr string) (*Pool, error) {
+	if p, ok := ps.pools[rangeStr]; ok {
+		return p, nil
+	}
+	start, end, err := ParseRange(rangeStr)
+	if err != nil {
+		return nil, err
+	}
+	p := NewPool(start, end)
+	ps.pools[rangeStr] = p
+	return p, nil
+}
+
+// Allocate allocates a port from the pool matching rangeStr, or the fallback if empty.
+func (ps *PoolSet) Allocate(rangeStr, serverID string) (int, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	if rangeStr == "" {
+		return ps.fallback.Allocate(serverID)
+	}
+	pool, err := ps.getOrCreate(rangeStr)
+	if err != nil {
+		return 0, err
+	}
+	return pool.Allocate(serverID)
+}
+
+// ReleaseByServer releases all ports owned by serverID across all pools.
+func (ps *PoolSet) ReleaseByServer(serverID string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	ps.fallback.ReleaseByServer(serverID)
+	for _, p := range ps.pools {
+		p.ReleaseByServer(serverID)
+	}
+}
+
+// ReKey updates ownership across all pools.
+func (ps *PoolSet) ReKey(oldID, newID string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	ps.fallback.ReKey(oldID, newID)
+	for _, p := range ps.pools {
+		p.ReKey(oldID, newID)
+	}
+}
+
+// Reserve reserves a port in whichever pool contains it, or the fallback.
+func (ps *PoolSet) Reserve(port int, serverID string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	for _, p := range ps.pools {
+		if p.Contains(port) {
+			p.Reserve(port, serverID)
+			return
+		}
+	}
+	ps.fallback.Reserve(port, serverID)
+}
