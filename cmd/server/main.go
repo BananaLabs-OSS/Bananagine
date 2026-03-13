@@ -90,13 +90,26 @@ func main() {
 	}
 
 	ipPool := ips.NewPool(config.IPStart, config.IPEnd)
-	portPool := ports.NewPool(config.PortStart, config.PortEnd)
+	fallbackPool := ports.NewPool(config.PortStart, config.PortEnd)
+	portPools := ports.NewPoolSet(fallbackPool)
+
+	// Pre-create pools from template port ranges so reconciliation works
+	for _, tmpl := range templates {
+		for _, p := range tmpl.Container.Ports {
+			if p.Range != "" {
+				if _, err := portPools.Allocate(p.Range, "__init__"); err == nil {
+					// Pool created; release the dummy allocation
+					portPools.ReleaseByServer("__init__")
+				}
+			}
+		}
+	}
 
 	// Reconcile pools with already-running containers
 	if existing, err := provider.List(context.Background(), nil); err == nil {
 		for _, s := range existing {
 			for _, p := range s.Ports {
-				portPool.Reserve(p, s.ID)
+				portPools.Reserve(p, s.ID)
 			}
 			if s.IP != "" {
 				ipPool.Reserve(s.IP, s.ID)
@@ -251,19 +264,29 @@ func main() {
 
 				fmt.Printf("Overlay mode: %s -> %s:%d\n", serverID, ip, allocatedPort)
 			} else {
-				// Host mode - dynamic port, allocate one per binding
-				n := max(len(container.Ports), 1)
-				allocatedPorts, err := portPool.AllocateN(n, serverID)
-				if err != nil {
-					c.JSON(503, gin.H{"error": err.Error()})
-					return
+				// Host mode - allocate each port from its own range (or fallback pool)
+				var allocatedPorts []int
+				for i := range container.Ports {
+					port, err := portPools.Allocate(container.Ports[i].Range, serverID)
+					if err != nil {
+						// Release any ports we already allocated for this server
+						portPools.ReleaseByServer(serverID)
+						c.JSON(503, gin.H{"error": err.Error()})
+						return
+					}
+					allocatedPorts = append(allocatedPorts, port)
+					container.Ports[i].Host = port
+					container.Ports[i].Container = port
+				}
+				if len(allocatedPorts) == 0 {
+					port, err := portPools.Allocate("", serverID)
+					if err != nil {
+						c.JSON(503, gin.H{"error": err.Error()})
+						return
+					}
+					allocatedPorts = append(allocatedPorts, port)
 				}
 				allocatedPort = allocatedPorts[0]
-
-				for i := range container.Ports {
-					container.Ports[i].Host = allocatedPorts[i]
-					container.Ports[i].Container = allocatedPorts[i]
-				}
 
 				container.Environment["SERVER_HOST"] = "0.0.0.0"
 
@@ -292,7 +315,7 @@ func main() {
 					if allocatedIP != "" {
 						ipPool.Release(allocatedIP)
 					} else {
-						portPool.ReleaseByServer(serverID)
+						portPools.ReleaseByServer(serverID)
 					}
 					c.JSON(500, gin.H{"error": "hook failed: " + err.Error()})
 					return
@@ -304,7 +327,7 @@ func main() {
 					if allocatedIP != "" {
 						ipPool.Release(allocatedIP)
 					} else {
-						portPool.ReleaseByServer(serverID)
+						portPools.ReleaseByServer(serverID)
 					}
 					c.JSON(500, gin.H{"error": fmt.Sprintf("hook returned %d", resp.StatusCode)})
 					return
@@ -320,7 +343,7 @@ func main() {
 					if allocatedIP != "" {
 						ipPool.Release(allocatedIP)
 					} else {
-						portPool.ReleaseByServer(serverID)
+						portPools.ReleaseByServer(serverID)
 					}
 					c.JSON(500, gin.H{"error": "hook response decode failed: " + err.Error()})
 					return
@@ -357,7 +380,7 @@ func main() {
 				if allocatedIP != "" {
 					ipPool.Release(allocatedIP)
 				} else {
-					portPool.ReleaseByServer(serverID)
+					portPools.ReleaseByServer(serverID)
 				}
 				c.JSON(500, gin.H{"error": err.Error()})
 				return
@@ -367,7 +390,7 @@ func main() {
 			if allocatedIP != "" {
 				ipPool.ReKey(serverID, server.ID)
 			} else {
-				portPool.ReKey(serverID, server.ID)
+				portPools.ReKey(serverID, server.ID)
 			}
 
 			// Add metadata to response
@@ -408,11 +431,11 @@ func main() {
 
 			// keep_ports=1 preserves port reservations (for recreate)
 			if c.Query("keep_ports") != "1" {
-				portPool.ReleaseByServer(id)
+				portPools.ReleaseByServer(id)
 				ipPool.ReleaseByServer(id)
 			} else if newID := c.Query("server_id"); newID != "" {
 				// Re-key ports to the new server ID so AllocateN can find them
-				portPool.ReKey(id, newID)
+				portPools.ReKey(id, newID)
 				ipPool.ReKey(id, newID)
 			}
 

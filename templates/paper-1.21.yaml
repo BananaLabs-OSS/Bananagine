@@ -12,10 +12,12 @@ container:
       container: 25565
       protocol: tcp
       name: java
+      range: "25565-25599"
     - host: 0
       container: 19132
       protocol: udp
       name: bedrock
+      range: "19132-19199"
   volumes:
     "/var/worlds/{{SERVER_ID}}": "/data/world"
   memory_limit: 3221225472
