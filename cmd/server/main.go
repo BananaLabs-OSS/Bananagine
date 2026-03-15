@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -492,6 +493,34 @@ func main() {
 			}
 
 			c.JSON(200, gin.H{"output": output})
+		})
+
+		// GET /orchestration/servers/:id/logs - retrieve container log output
+		orchestration.GET("/servers/:id/logs", func(c *gin.Context) {
+			ctx := c.Request.Context()
+			id := c.Param("id")
+
+			tail := 200
+			if t := c.Query("tail"); t != "" {
+				if n, err := strconv.Atoi(t); err == nil && n > 0 {
+					if n > 1000 {
+						n = 1000
+					}
+					tail = n
+				}
+			}
+
+			logs, err := provider.Logs(ctx, id, tail)
+			if err != nil {
+				if errdefs.IsNotFound(err) {
+					c.JSON(404, gin.H{"error": "server not found"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(200, gin.H{"logs": logs})
 		})
 
 		// GET /orchestration/worlds/:name - zip and stream a server's world data
