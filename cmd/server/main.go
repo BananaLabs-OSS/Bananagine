@@ -13,12 +13,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bananalabs-oss/bananagine/internal/ips"
 	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
-	"github.com/bananalabs-oss/potassium/config"
+	potconfig "github.com/bananalabs-oss/potassium/config"
 	"github.com/bananalabs-oss/potassium/orchestrator"
 	"github.com/bananalabs-oss/potassium/server"
 	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
@@ -35,6 +36,60 @@ type CreateServerRequest struct {
 		MemoryLimit int64   `json:"memory_limit,omitempty"`
 		CPULimit    float64 `json:"cpu_limit,omitempty"`
 	} `json:"resources,omitempty"`
+}
+
+// capacityTracker tracks allocated CPU and memory across active containers.
+type capacityTracker struct {
+	mu         sync.Mutex
+	cpuBudget  float64
+	memBudget  float64 // GiB
+	allocCPU   float64
+	allocMem   float64 // GiB
+	// Per-container resources for subtraction on delete
+	containers map[string]struct{ cpu float64; memGiB float64 }
+}
+
+func newCapacityTracker(cpuBudget, memBudget float64) *capacityTracker {
+	return &capacityTracker{
+		cpuBudget:  cpuBudget,
+		memBudget:  memBudget,
+		containers: make(map[string]struct{ cpu float64; memGiB float64 }),
+	}
+}
+
+func (ct *capacityTracker) tryAllocate(containerID string, cpuLimit float64, memLimitBytes int64) error {
+	memGiB := float64(memLimitBytes) / (1024 * 1024 * 1024)
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if ct.cpuBudget > 0 && ct.allocCPU+cpuLimit > ct.cpuBudget {
+		return fmt.Errorf("CPU capacity exceeded (%.2f + %.2f > %.2f)", ct.allocCPU, cpuLimit, ct.cpuBudget)
+	}
+	if ct.memBudget > 0 && ct.allocMem+memGiB > ct.memBudget {
+		return fmt.Errorf("memory capacity exceeded (%.2f + %.2f > %.2f GiB)", ct.allocMem, memGiB, ct.memBudget)
+	}
+	ct.allocCPU += cpuLimit
+	ct.allocMem += memGiB
+	ct.containers[containerID] = struct{ cpu float64; memGiB float64 }{cpuLimit, memGiB}
+	return nil
+}
+
+func (ct *capacityTracker) commit(tempID, realID string) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if res, ok := ct.containers[tempID]; ok {
+		delete(ct.containers, tempID)
+		ct.containers[realID] = res
+	}
+}
+
+func (ct *capacityTracker) release(containerID string) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if res, ok := ct.containers[containerID]; ok {
+		ct.allocCPU -= res.cpu
+		ct.allocMem -= res.memGiB
+		delete(ct.containers, containerID)
+	}
 }
 
 func main() {
@@ -58,18 +113,24 @@ func main() {
 		PortEnd      int
 		ExternalHost string
 	}{
-		ListenAddr:   config.Resolve(*listenAddr, config.EnvOrDefault("LISTEN_ADDR", ""), ":3000"),
-		TemplatesDir: config.Resolve(*templatesDir, config.EnvOrDefault("TEMPLATES_DIR", ""), "./templates"),
-		IPStart:      config.Resolve(*ipStart, config.EnvOrDefault("IP_POOL_START", ""), "10.99.0.10"),
-		IPEnd:        config.Resolve(*ipEnd, config.EnvOrDefault("IP_POOL_END", ""), "10.99.0.250"),
-		PortStart:    config.ResolveInt(*portStart, config.EnvOrDefaultInt("PORT_POOL_START", 0), 5521),
-		PortEnd:      config.ResolveInt(*portEnd, config.EnvOrDefaultInt("PORT_POOL_END", 0), 5599),
-		ExternalHost: config.Resolve(*externalHost, config.EnvOrDefault("EXTERNAL_HOST", ""), ""),
+		ListenAddr:   potconfig.Resolve(*listenAddr, potconfig.EnvOrDefault("LISTEN_ADDR", ""), ":3000"),
+		TemplatesDir: potconfig.Resolve(*templatesDir, potconfig.EnvOrDefault("TEMPLATES_DIR", ""), "./templates"),
+		IPStart:      potconfig.Resolve(*ipStart, potconfig.EnvOrDefault("IP_POOL_START", ""), "10.99.0.10"),
+		IPEnd:        potconfig.Resolve(*ipEnd, potconfig.EnvOrDefault("IP_POOL_END", ""), "10.99.0.250"),
+		PortStart:    potconfig.ResolveInt(*portStart, potconfig.EnvOrDefaultInt("PORT_POOL_START", 0), 5521),
+		PortEnd:      potconfig.ResolveInt(*portEnd, potconfig.EnvOrDefaultInt("PORT_POOL_END", 0), 5599),
+		ExternalHost: potconfig.Resolve(*externalHost, potconfig.EnvOrDefault("EXTERNAL_HOST", ""), ""),
 	}
+
+	cpuBudget := potconfig.EnvOrDefaultFloat("CPU_BUDGET", 7.0)
+	memBudget := potconfig.EnvOrDefaultFloat("MEMORY_BUDGET", 56.0)
+	capacity := newCapacityTracker(cpuBudget, memBudget)
 
 	// Log config
 	fmt.Printf("Listen: %s\n", config.ListenAddr)
 	fmt.Printf("Templates: %s\n", config.TemplatesDir)
+	fmt.Printf("CPU budget: %.2f cores\n", cpuBudget)
+	fmt.Printf("Memory budget: %.2f GiB\n", memBudget)
 	fmt.Printf("IP pool: %s - %s\n", config.IPStart, config.IPEnd)
 	fmt.Printf("Port pool: %d - %d\n", config.PortStart, config.PortEnd)
 	if config.ExternalHost != "" {
@@ -106,7 +167,7 @@ func main() {
 		}
 	}
 
-	// Reconcile pools with already-running containers
+	// Reconcile pools and capacity with already-running containers
 	if existing, err := provider.List(context.Background(), nil); err == nil {
 		for _, s := range existing {
 			for _, p := range s.Ports {
@@ -115,9 +176,21 @@ func main() {
 			if s.IP != "" {
 				ipPool.Reserve(s.IP, s.ID)
 			}
+			// Reconcile capacity: match container to template by name prefix
+			for tName, tmpl := range templates {
+				if strings.HasPrefix(s.Name, tName) {
+					cpuLim := tmpl.Container.CPULimit
+					memLim := tmpl.Container.MemoryLimit
+					if cpuLim > 0 || memLim > 0 {
+						_ = capacity.tryAllocate(s.ID, cpuLim, memLim)
+					}
+					break
+				}
+			}
 		}
 		if len(existing) > 0 {
 			fmt.Printf("Reconciled %d existing containers into pools\n", len(existing))
+			fmt.Printf("Reconciled capacity: %.2f CPU, %.2f GiB memory allocated\n", capacity.allocCPU, capacity.allocMem)
 		}
 	}
 
@@ -132,19 +205,23 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// List all loaded templates with game and label metadata
+	// List all loaded templates with game, label, and resource metadata
 	type templateInfo struct {
-		Name  string `json:"name"`
-		Game  string `json:"game"`
-		Label string `json:"label"`
+		Name        string  `json:"name"`
+		Game        string  `json:"game"`
+		Label       string  `json:"label"`
+		CPULimit    float64 `json:"cpu_limit"`
+		MemoryLimit int64   `json:"memory_limit"`
 	}
 	r.GET("/templates", func(c *gin.Context) {
 		result := make([]templateInfo, 0, len(templates))
 		for _, t := range templates {
 			result = append(result, templateInfo{
-				Name:  t.Name,
-				Game:  t.Game,
-				Label: t.Label,
+				Name:        t.Name,
+				Game:        t.Game,
+				Label:       t.Label,
+				CPULimit:    t.Container.CPULimit,
+				MemoryLimit: t.Container.MemoryLimit,
 			})
 		}
 		c.JSON(200, result)
@@ -373,11 +450,23 @@ func main() {
 				container.CPULimit = req.Resources.CPULimit
 			}
 
+			// Capacity check — reject if budgets would be exceeded
+			if err := capacity.tryAllocate(serverID, container.CPULimit, container.MemoryLimit); err != nil {
+				if allocatedIP != "" {
+					ipPool.Release(allocatedIP)
+				} else {
+					portPools.ReleaseByServer(serverID)
+				}
+				c.JSON(503, gin.H{"error": err.Error()})
+				return
+			}
+
 			fmt.Println("Final environment:", container.Environment)
 
 			ctx := c.Request.Context()
 			server, err := provider.Allocate(ctx, container)
 			if err != nil {
+				capacity.release(serverID)
 				if allocatedIP != "" {
 					ipPool.Release(allocatedIP)
 				} else {
@@ -387,7 +476,8 @@ func main() {
 				return
 			}
 
-			// Re-key pool allocation from serverID to container ID so DELETE can release it
+			// Re-key pool and capacity allocations from serverID to container ID so DELETE can release them
+			capacity.commit(serverID, server.ID)
 			if allocatedIP != "" {
 				ipPool.ReKey(serverID, server.ID)
 			} else {
@@ -429,6 +519,9 @@ func main() {
 		orchestration.DELETE("/servers/:id", func(c *gin.Context) {
 			ctx := c.Request.Context()
 			id := c.Param("id")
+
+			// Release capacity budget
+			capacity.release(id)
 
 			// keep_ports=1 preserves port reservations (for recreate)
 			if c.Query("keep_ports") != "1" {
