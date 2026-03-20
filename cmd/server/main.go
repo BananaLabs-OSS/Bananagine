@@ -122,8 +122,8 @@ func main() {
 		ExternalHost: potconfig.Resolve(*externalHost, potconfig.EnvOrDefault("EXTERNAL_HOST", ""), ""),
 	}
 
-	cpuBudget := potconfig.EnvOrDefaultFloat("CPU_BUDGET", 7.0)
-	memBudget := potconfig.EnvOrDefaultFloat("MEMORY_BUDGET", 56.0)
+	cpuBudget := potconfig.EnvOrDefaultFloat("CPU_BUDGET", 0)  // 0 = no limit
+	memBudget := potconfig.EnvOrDefaultFloat("MEMORY_BUDGET", 0) // 0 = no limit
 	capacity := newCapacityTracker(cpuBudget, memBudget)
 
 	// Log config
