@@ -202,6 +202,10 @@ func main() {
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
+		if _, err := provider.List(c.Request.Context(), nil); err != nil {
+			c.JSON(503, gin.H{"status": "degraded", "docker": "unreachable"})
+			return
+		}
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
