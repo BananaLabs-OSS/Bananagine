@@ -9,8 +9,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"bufio"
+	"bytes"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,6 +94,69 @@ func (ct *capacityTracker) release(containerID string) {
 		ct.allocMem -= res.memGiB
 		delete(ct.containers, containerID)
 	}
+}
+
+// Snapshot returns current allocated resources.
+func (ct *capacityTracker) Snapshot() (allocCPU, allocMem float64, count int) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	return ct.allocCPU, ct.allocMem, len(ct.containers)
+}
+
+// readDiskUsage returns total and used disk space in bytes for a path.
+// Returns 0,0 on non-Linux platforms.
+func readDiskUsage(path string) (total, used uint64) {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return 0, 0 // not Linux
+	}
+	f.Close()
+
+	// Use df command as a portable fallback
+	// Output: "total used" in 1K blocks
+	cmd := fmt.Sprintf("df -k '%s' | tail -1 | awk '{print $2, $3}'", path)
+	out, err := execCommand("sh", "-c", cmd)
+	if err != nil {
+		return 0, 0
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) >= 2 {
+		t, _ := strconv.ParseUint(fields[0], 10, 64)
+		u, _ := strconv.ParseUint(fields[1], 10, 64)
+		return t * 1024, u * 1024 // kB to bytes
+	}
+	return 0, 0
+}
+
+func execCommand(name string, args ...string) (string, error) {
+	var buf bytes.Buffer
+	cmd := osexec.Command(name, args...)
+	cmd.Stdout = &buf
+	err := cmd.Run()
+	return buf.String(), err
+}
+
+// readMemInfo reads total memory from /proc/meminfo (Linux only).
+func readMemInfo() (uint64, error) {
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, err := strconv.ParseUint(fields[1], 10, 64)
+				if err == nil {
+					return kb * 1024, nil // convert kB to bytes
+				}
+			}
+		}
+	}
+	return 0, fmt.Errorf("MemTotal not found")
 }
 
 func main() {
@@ -620,6 +687,83 @@ func main() {
 			c.JSON(200, gin.H{"logs": logs})
 		})
 
+		// GET /orchestration/events - SSE stream of container lifecycle events
+		orchestration.GET("/events", func(c *gin.Context) {
+			c.Header("Content-Type", "text/event-stream")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Connection", "keep-alive")
+			c.Writer.Flush()
+
+			ctx := c.Request.Context()
+			eventCh, errCh := provider.Events(ctx)
+
+			for {
+				select {
+				case event, ok := <-eventCh:
+					if !ok {
+						return
+					}
+					data, _ := json.Marshal(event)
+					fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+					c.Writer.Flush()
+				case <-errCh:
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
+		})
+
+		// GET /orchestration/servers/:id/stats - single container stats
+		orchestration.GET("/servers/:id/stats", func(c *gin.Context) {
+			ctx := c.Request.Context()
+			id := c.Param("id")
+
+			stats, err := provider.Stats(ctx, id)
+			if err != nil {
+				if errdefs.IsNotFound(err) {
+					c.JSON(404, gin.H{"error": "server not found"})
+					return
+				}
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(200, stats)
+		})
+
+		// GET /orchestration/stats - all container stats + node summary
+		orchestration.GET("/stats", func(c *gin.Context) {
+			ctx := c.Request.Context()
+
+			containers, err := provider.StatsAll(ctx)
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			allocCPU, allocMem, _ := capacity.Snapshot()
+
+			// Node info
+			cpuCores := runtime.NumCPU()
+			var totalMem uint64
+			if info, err := readMemInfo(); err == nil {
+				totalMem = info
+			}
+			diskTotal, diskUsed := readDiskUsage("/")
+
+			c.JSON(200, gin.H{
+				"containers": containers,
+				"node": gin.H{
+					"cpu_cores":        cpuCores,
+					"total_memory":     totalMem,
+					"allocated_cpu":    allocCPU,
+					"allocated_memory": allocMem,
+					"disk_total":       diskTotal,
+					"disk_used":        diskUsed,
+				},
+			})
+		})
+
 		// GET /orchestration/worlds/:name - zip and stream a server's world data
 		orchestration.GET("/worlds/:name", func(c *gin.Context) {
 			name := c.Param("name")
@@ -664,6 +808,30 @@ func main() {
 			}); err != nil {
 				log.Printf("Error walking world directory %s: %v", worldDir, err)
 			}
+		})
+
+		// POST /orchestration/worlds/:name/apply-gamerules - write flag for entrypoint
+		orchestration.POST("/worlds/:name/apply-gamerules", func(c *gin.Context) {
+			name := c.Param("name")
+			worldsBase := os.Getenv("WORLDS_DIR")
+			if worldsBase == "" {
+				worldsBase = "/var/sessions/worlds"
+			}
+			flagPath := filepath.Join(worldsBase, name, ".sessions-apply-gamerules")
+
+			absFlag, _ := filepath.Abs(flagPath)
+			absBase, _ := filepath.Abs(worldsBase)
+			if !strings.HasPrefix(absFlag, absBase+string(filepath.Separator)) {
+				c.JSON(400, gin.H{"error": "invalid name"})
+				return
+			}
+
+			os.MkdirAll(filepath.Dir(flagPath), 0755)
+			if err := os.WriteFile(flagPath, []byte("1"), 0644); err != nil {
+				c.JSON(500, gin.H{"error": "failed to write flag: " + err.Error()})
+				return
+			}
+			c.JSON(200, gin.H{"ok": true})
 		})
 
 		// DELETE /orchestration/worlds/:name - remove a server's world data from disk

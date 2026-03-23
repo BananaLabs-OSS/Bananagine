@@ -22,6 +22,11 @@ container:
     "/var/worlds/{{SERVER_ID}}": "/data/world"
   memory_limit: 3221225472
   cpu_limit: 0.33
+  disk_io_read_bps: 104857600   # 100 MB/s read limit
+  disk_io_write_bps: 52428800   # 50 MB/s write limit
+  disk_size_limit: 10737418240  # 10 GB disk quota
+  pids_limit: 256               # Max processes
+  memory_swap: 3221225472       # Same as memory_limit (no swap)
   environment:
     MEMORY: "2G"
     GAMEMODE: "survival"
