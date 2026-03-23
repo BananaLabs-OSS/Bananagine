@@ -243,9 +243,11 @@ func main() {
 			if s.IP != "" {
 				ipPool.Reserve(s.IP, s.ID)
 			}
-			// Reconcile capacity: match container to template by name prefix
-			for tName, tmpl := range templates {
-				if strings.HasPrefix(s.Name, tName) {
+			// Reconcile capacity: skip infrastructure containers, assume game server
+			isInfra := strings.Contains(s.Name, "bananagine") || strings.Contains(s.Name, "paper-server")
+			if !isInfra {
+				// Use first template's limits as default for untagged containers
+				for _, tmpl := range templates {
 					cpuLim := tmpl.Container.CPULimit
 					memLim := tmpl.Container.MemoryLimit
 					if cpuLim > 0 || memLim > 0 {
