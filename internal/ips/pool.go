@@ -44,12 +44,16 @@ func (p *Pool) Allocate(serverID string) (string, error) {
 	ip := make(net.IP, len(p.start))
 	copy(ip, p.start)
 
-	for ; !ip.Equal(p.end); incIP(ip) {
+	for {
 		ipStr := ip.String()
 		if _, used := p.allocated[ipStr]; !used {
 			p.allocated[ipStr] = serverID
 			return ipStr, nil
 		}
+		if ip.Equal(p.end) {
+			break
+		}
+		incIP(ip)
 	}
 
 	return "", fmt.Errorf("no IPs available")

@@ -52,7 +52,8 @@ func LoadTemplates(dir string) (map[string]Template, error) {
 
 		data, err := os.ReadFile(filepath.Join(dir, file.Name()))
 		if err != nil {
-			continue // Skip files that fail to read
+			log.Printf("Failed to read template %s: %v", file.Name(), err)
+			continue
 		}
 
 		// Parse into a template
