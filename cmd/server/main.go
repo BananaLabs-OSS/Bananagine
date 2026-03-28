@@ -1011,6 +1011,79 @@ func main() {
 		})
 	}
 
+	// --- Image build endpoints (for auto-update sidecar) ---
+
+	var buildMu sync.Mutex
+	var buildStatus struct {
+		Building      bool      `json:"building"`
+		LastBuildTime time.Time `json:"last_build_time"`
+		LastError     string    `json:"last_error"`
+	}
+
+	// POST /admin/build-image — trigger Docker image rebuild
+	r.POST("/admin/build-image", func(c *gin.Context) {
+		var req struct {
+			BuildArgs map[string]string `json:"build_args"`
+			ImageTag  string            `json:"image_tag"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		if req.ImageTag == "" {
+			c.JSON(400, gin.H{"error": "image_tag required"})
+			return
+		}
+
+		if !buildMu.TryLock() {
+			c.JSON(409, gin.H{"error": "build already in progress"})
+			return
+		}
+
+		buildStatus.Building = true
+		buildStatus.LastError = ""
+
+		// Build context is TEMPLATES_DIR (which is the paper-server repo mounted at /app/templates)
+		buildDir := os.Getenv("TEMPLATES_DIR")
+		if buildDir == "" {
+			buildDir = "/app/templates"
+		}
+
+		go func() {
+			defer buildMu.Unlock()
+			defer func() { buildStatus.Building = false }()
+
+			// Build docker build args
+			args := []string{"build"}
+			for k, v := range req.BuildArgs {
+				args = append(args, "--build-arg", k+"="+v)
+			}
+			args = append(args, "-t", req.ImageTag, buildDir)
+
+			log.Printf("[Build] Starting: docker %s", strings.Join(args, " "))
+			cmd := osexec.Command("docker", args...)
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+
+			if err := cmd.Run(); err != nil {
+				buildStatus.LastError = fmt.Sprintf("%v: %s", err, out.String())
+				log.Printf("[Build] Failed: %s", buildStatus.LastError)
+				return
+			}
+
+			buildStatus.LastBuildTime = time.Now().UTC()
+			log.Printf("[Build] Success: %s", req.ImageTag)
+		}()
+
+		c.JSON(202, gin.H{"building": true})
+	})
+
+	// GET /admin/build-status — check current build status
+	r.GET("/admin/build-status", func(c *gin.Context) {
+		c.JSON(200, buildStatus)
+	})
+
 	server.ListenAndShutdown(config.ListenAddr, r, "Bananagine")
 }
 
