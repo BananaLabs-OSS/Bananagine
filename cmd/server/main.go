@@ -24,6 +24,7 @@ import (
 	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
 	potconfig "github.com/bananalabs-oss/potassium/config"
+	"github.com/bananalabs-oss/potassium/middleware"
 	"github.com/bananalabs-oss/potassium/orchestrator"
 	"github.com/bananalabs-oss/potassium/server"
 	"github.com/bananalabs-oss/potassium/orchestrator/providers/docker"
@@ -189,6 +190,7 @@ func main() {
 		ExternalHost: potconfig.Resolve(*externalHost, potconfig.EnvOrDefault("EXTERNAL_HOST", ""), ""),
 	}
 
+	serviceToken := potconfig.EnvOrDefault("SERVICE_TOKEN", "")
 	cpuBudget := potconfig.EnvOrDefaultFloat("CPU_BUDGET", 0)  // 0 = no limit
 	memBudget := potconfig.EnvOrDefaultFloat("MEMORY_BUDGET", 0) // 0 = no limit
 	capacity := newCapacityTracker(cpuBudget, memBudget)
@@ -311,8 +313,18 @@ func main() {
 		c.JSON(200, tmpl.Config)
 	})
 
+	// Service auth middleware (protects orchestration, registry, admin)
+	if serviceToken != "" {
+		log.Printf("Service auth enabled (X-Service-Token required)")
+	} else {
+		log.Printf("WARNING: SERVICE_TOKEN not set — all endpoints are unprotected")
+	}
+
 	// Orchestration routes
 	orchestration := r.Group("/orchestration")
+	if serviceToken != "" {
+		orchestration.Use(middleware.ServiceAuth(serviceToken))
+	}
 	{
 		orchestration.GET("/servers", func(c *gin.Context) {
 			ctx := c.Request.Context()
@@ -864,6 +876,9 @@ func main() {
 
 	// Registry routes
 	registryGroup := r.Group("/registry")
+	if serviceToken != "" {
+		registryGroup.Use(middleware.ServiceAuth(serviceToken))
+	}
 	{
 		registryGroup.POST("/servers", func(c *gin.Context) {
 			// register server
@@ -1020,8 +1035,13 @@ func main() {
 		LastError     string    `json:"last_error"`
 	}
 
+	adminGroup := r.Group("/admin")
+	if serviceToken != "" {
+		adminGroup.Use(middleware.ServiceAuth(serviceToken))
+	}
+
 	// POST /admin/build-image — trigger Docker image rebuild
-	r.POST("/admin/build-image", func(c *gin.Context) {
+	adminGroup.POST("/build-image", func(c *gin.Context) {
 		var req struct {
 			BuildArgs map[string]string `json:"build_args"`
 			ImageTag  string            `json:"image_tag"`
@@ -1080,7 +1100,7 @@ func main() {
 	})
 
 	// GET /admin/build-status — check current build status
-	r.GET("/admin/build-status", func(c *gin.Context) {
+	adminGroup.GET("/build-status", func(c *gin.Context) {
 		c.JSON(200, buildStatus)
 	})
 
