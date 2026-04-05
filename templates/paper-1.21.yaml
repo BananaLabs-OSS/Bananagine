@@ -20,13 +20,13 @@ container:
       range: "19132-19199"
   volumes:
     "/var/worlds/{{SERVER_ID}}": "/data/world"
-  memory_limit: 3221225472
-  cpu_limit: 0.33
-  disk_io_read_bps: 104857600   # 100 MB/s read limit
-  disk_io_write_bps: 52428800   # 50 MB/s write limit
-  disk_size_limit: 10737418240  # 10 GB disk quota
-  pids_limit: 256               # Max processes
-  memory_swap: 3221225472       # Same as memory_limit (no swap)
+  memory_limit: 3221225472      # 3 GB — enough for 5 players + 4 plugins; keeps 20 servers within 64 GB
+  cpu_limit: 1.5                # 1 core for the main tick loop + 0.5 for Paper async chunks/plugins
+  disk_io_read_bps: 0           # No limit — NVMe handles bursty chunk loading; throttling causes stutter
+  disk_io_write_bps: 0          # No limit — autosave flushes the whole world every 5 min, 50 MB/s was stalling the tick loop
+  disk_size_limit: 10737418240  # 10 GB — plenty for a vanilla world with 5 players
+  pids_limit: 256               # JVM + Paper threads + plugin threads; 256 is safe headroom
+  memory_swap: 3221225472       # Equal to memory_limit = no swap; swap destroys MC tick performance
   environment:
     MEMORY: "2G"
     GAMEMODE: "survival"
@@ -35,6 +35,8 @@ container:
     HARDCORE: "false"
     WORLD_TYPE: "normal"
     MOTD: "A Minecraft Server"
+    WORLD_BORDER_SIZE: "10000"
+    WORLD_BORDER_CENTER: "0 0"
 
 config:
   settings:
