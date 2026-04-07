@@ -236,8 +236,13 @@ func main() {
 		}
 	}
 
-	// Reconcile pools and capacity with already-running containers
+	// Reconcile pools and capacity with already-running containers.
+	// Only counts containers whose name starts with a known template prefix
+	// (e.g. "minecraft-", "minecraft-plus-"). Everything else — compose infra,
+	// monitoring, manual orphans — is ignored. Uses each container's ACTUAL
+	// HostConfig limits, not template guesses.
 	if existing, err := provider.List(context.Background(), nil); err == nil {
+		reconciled := 0
 		for _, s := range existing {
 			for _, p := range s.Ports {
 				portPools.Reserve(p, s.ID)
@@ -245,22 +250,24 @@ func main() {
 			if s.IP != "" {
 				ipPool.Reserve(s.IP, s.ID)
 			}
-			// Reconcile capacity: skip infrastructure containers, assume game server
-			isInfra := strings.Contains(s.Name, "bananagine") || strings.Contains(s.Name, "paper-server")
-			if !isInfra {
-				// Use first template's limits as default for untagged containers
-				for _, tmpl := range templates {
-					cpuLim := tmpl.Container.CPULimit
-					memLim := tmpl.Container.MemoryLimit
-					if cpuLim > 0 || memLim > 0 {
-						_ = capacity.tryAllocate(s.ID, cpuLim, memLim)
-					}
+			name := strings.TrimPrefix(s.Name, "/")
+			matched := false
+			for _, tmpl := range templates {
+				if strings.HasPrefix(name, tmpl.Name+"-") {
+					matched = true
 					break
 				}
 			}
+			if !matched {
+				continue
+			}
+			if s.CPULimit > 0 || s.MemoryLimit > 0 {
+				_ = capacity.tryAllocate(s.ID, s.CPULimit, s.MemoryLimit)
+				reconciled++
+			}
 		}
 		if len(existing) > 0 {
-			fmt.Printf("Reconciled %d existing containers into pools\n", len(existing))
+			fmt.Printf("Reconciled %d existing containers into pools (%d managed)\n", len(existing), reconciled)
 			fmt.Printf("Reconciled capacity: %.2f CPU, %.2f GiB memory allocated\n", capacity.allocCPU, capacity.allocMem)
 		}
 	}
@@ -547,6 +554,10 @@ func main() {
 			}
 
 			fmt.Println("Final environment:", container.Environment)
+
+			// Name the container after the serverID so reconcile can find it
+			// later via prefix match against loaded templates.
+			container.Name = serverID
 
 			ctx := c.Request.Context()
 			server, err := provider.Allocate(ctx, container)
