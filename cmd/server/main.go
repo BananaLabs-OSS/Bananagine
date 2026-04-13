@@ -206,10 +206,26 @@ func main() {
 		fmt.Printf("External host: %s\n", config.ExternalHost)
 	}
 
-	// Load templates at startup
+	// Load templates at startup (thread-safe store for hot reload)
+	var templatesMu sync.RWMutex
 	templates, err := template.LoadTemplates(config.TemplatesDir)
 	if err != nil {
 		log.Fatal(err)
+	}
+	getTemplates := func() map[string]template.Template {
+		templatesMu.RLock()
+		defer templatesMu.RUnlock()
+		return templates
+	}
+	reloadTemplates := func() (int, error) {
+		fresh, err := template.LoadTemplates(config.TemplatesDir)
+		if err != nil {
+			return 0, err
+		}
+		templatesMu.Lock()
+		templates = fresh
+		templatesMu.Unlock()
+		return len(fresh), nil
 	}
 
 	fmt.Printf("Loaded %d templates\n", len(templates))
@@ -252,7 +268,7 @@ func main() {
 			}
 			name := strings.TrimPrefix(s.Name, "/")
 			matched := false
-			for _, tmpl := range templates {
+			for _, tmpl := range getTemplates() {
 				if strings.HasPrefix(name, tmpl.Name+"-") {
 					matched = true
 					break
@@ -296,8 +312,9 @@ func main() {
 		MemoryLimit int64   `json:"memory_limit"`
 	}
 	r.GET("/templates", func(c *gin.Context) {
-		result := make([]templateInfo, 0, len(templates))
-		for _, t := range templates {
+		tpls := getTemplates()
+		result := make([]templateInfo, 0, len(tpls))
+		for _, t := range tpls {
 			result = append(result, templateInfo{
 				Name:        t.Name,
 				Game:        t.Game,
@@ -310,9 +327,21 @@ func main() {
 	})
 
 	// Template config endpoint
+	// POST /reload-templates — hot reload templates from disk
+	r.POST("/reload-templates", func(c *gin.Context) {
+		count, err := reloadTemplates()
+		if err != nil {
+			log.Printf("[Reload] Failed to reload templates: %v", err)
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		log.Printf("[Reload] Reloaded %d templates", count)
+		c.JSON(200, gin.H{"reloaded": count})
+	})
+
 	r.GET("/templates/:name/config", func(c *gin.Context) {
 		name := c.Param("name")
-		tmpl, ok := templates[name]
+		tmpl, ok := getTemplates()[name]
 		if !ok {
 			c.JSON(404, gin.H{"error": "template not found"})
 			return
@@ -367,7 +396,7 @@ func main() {
 			}
 
 			// Look up template
-			tmpl, ok := templates[req.Template]
+			tmpl, ok := getTemplates()[req.Template]
 			if !ok {
 				c.JSON(404, gin.H{"error": "template not found"})
 				return
