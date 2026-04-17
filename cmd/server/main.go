@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bananalabs-oss/bananagine/internal/eventbuffer"
 	"github.com/bananalabs-oss/bananagine/internal/ips"
 	"github.com/bananalabs-oss/bananagine/internal/ports"
 	"github.com/bananalabs-oss/bananagine/internal/template"
@@ -235,6 +236,27 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Event ring buffer — keeps last 5 minutes or 1000 events so
+	// plugins that poll (instead of holding a long SSE connection)
+	// can catch up with container lifecycle events since their last
+	// cursor. SSE endpoint is unaffected; it still streams live.
+	eventBuf := eventbuffer.New(1000, 5*time.Minute)
+	go func() {
+		ctx := context.Background()
+		ch, errCh := provider.Events(ctx)
+		for {
+			select {
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				eventBuf.Append(ev.ContainerID, ev.Name, ev.Action)
+			case <-errCh:
+				return
+			}
+		}
+	}()
 
 	ipPool := ips.NewPool(config.IPStart, config.IPEnd)
 	fallbackPool := ports.NewPool(config.PortStart, config.PortEnd)
