@@ -1,0 +1,34 @@
+name = "bananagine"
+version = "0.6.0"
+wasm = "bananagine.wasm"
+
+capabilities = [
+    "transport.http.inbound",
+    "transport.http.outbound",
+    "transport.sse",
+    "storage.fs",
+    "spawn.docker",
+]
+
+[config]
+# templates is optional — when set, loads the listed files verbatim from
+# templates/ (comma-separated). Leave unset to scan templates/ for every
+# *.yaml / *.yml entry (matches the original TEMPLATES_DIR behaviour).
+# templates = "minecraft.yaml,minecraft-plus.yaml"
+ip_pool_start = "10.99.0.10"
+ip_pool_end = "10.99.0.250"
+port_pool_start = 5521
+port_pool_end = 5599
+external_host = ""
+service_token = ""
+cpu_budget = 0
+memory_budget = 0
+worlds_dir = "/var/sessions/worlds"
+# Node hardware descriptors — surface through /orchestration/stats.node.
+# WASM can't read /proc, so the operator fills these in here (bytes for
+# memory/disk, integer core count for CPU). Zeros render as 0 in the
+# stats response with a startup warning.
+node_cpu_cores = 0
+node_total_memory = 0
+node_disk_total = 0
+node_disk_used = 0

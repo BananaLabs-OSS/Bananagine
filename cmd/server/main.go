@@ -238,7 +238,7 @@ func main() {
 	}
 
 	// Event ring buffer — keeps last 5 minutes or 1000 events so
-	// plugins that poll (instead of holding a long SSE connection)
+	// cells that poll (instead of holding a long SSE connection)
 	// can catch up with container lifecycle events since their last
 	// cursor. SSE endpoint is unaffected; it still streams live.
 	eventBuf := eventbuffer.New(1000, 5*time.Minute)

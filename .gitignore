@@ -33,3 +33,8 @@ go.work.sum
 
 *.json
 !templates/*.json
+
+pulp-cell/*.wasm
+pulp-cell/data/
+pulp-deployment/app
+pulp-deployment/data/

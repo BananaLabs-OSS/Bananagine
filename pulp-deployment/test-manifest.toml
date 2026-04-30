@@ -1,0 +1,21 @@
+name = "bananagine"
+version = "0.6.0"
+wasm = "../pulp-cell/bananagine.wasm"
+
+capabilities = [
+    "transport.http.inbound",
+    "transport.http.outbound",
+    "storage.fs",
+    "spawn.docker",
+]
+
+[config]
+templates = "test-server.yaml"
+ip_pool_start = "10.99.0.10"
+ip_pool_end = "10.99.0.250"
+port_pool_start = 9000
+port_pool_end = 9050
+external_host = ""
+service_token = "test-token"
+cpu_budget = 0
+memory_budget = 0

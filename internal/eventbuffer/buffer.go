@@ -1,6 +1,6 @@
 // Package eventbuffer maintains a ring buffer of recent container
 // events so clients that can't hold a long-lived SSE connection
-// (WASM plugins, stateless functions) can poll for events since a
+// (WASM cells, stateless functions) can poll for events since a
 // cursor instead.
 package eventbuffer
 
