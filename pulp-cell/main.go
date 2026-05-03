@@ -595,6 +595,22 @@ func bootstrap(configBytes []byte) error {
 		}
 
 		if err := docker.Destroy(id); err != nil {
+			// Idempotent destroy: if the container is already gone (or
+			// never existed), surface 204 so callers don't loop. The
+			// resource releases above already ran — those are also
+			// idempotent. Other docker errors still bubble as 500.
+			//
+			// The other action endpoints (restart, exec, logs) return
+			// 404 here, but DELETE is semantically "make it gone" — if
+			// it's already gone, that's success, not a "not found"
+			// distinct from the goal. Returning 204 lets Evolution's
+			// destroy retry loop terminate cleanly without needing the
+			// 5-attempt give-up workaround we shipped on the engine
+			// side.
+			if isDockerNotFound(err) {
+				c.Status(204)
+				return
+			}
 			c.JSON(500, pulpgin.H{"error": err.Error()})
 			return
 		}
