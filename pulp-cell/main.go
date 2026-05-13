@@ -173,9 +173,19 @@ type createServerRequest struct {
 	Template  string            `json:"template"`
 	ServerID  string            `json:"server_id,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
+	// Resources overrides the per-template YAML defaults. Precedence is:
+	//   YAML default → MemoryLimit/CPULimit (legacy, byte/cores) →
+	//   MaxRamMb/MaxCpuCores (new, MB/cores) → caller-supplied Env["MEMORY"]
+	// New fields take precedence over legacy. JvmHeapMb defaults to
+	// MaxRamMb - 1536 (reserved for entrypoint + OS overhead) when zero.
 	Resources struct {
+		// Legacy fields — bytes for memory, fractional cores for CPU.
 		MemoryLimit int64   `json:"memory_limit,omitempty"`
 		CPULimit    float64 `json:"cpu_limit,omitempty"`
+		// New tier-driven fields.
+		MaxCpuCores float64 `json:"max_cpu_cores,omitempty"`
+		MaxRamMb    int64   `json:"max_ram_mb,omitempty"`
+		JvmHeapMb   int64   `json:"jvm_heap_mb,omitempty"`
 	} `json:"resources,omitempty"`
 }
 
@@ -517,16 +527,37 @@ func bootstrap(configBytes []byte) error {
 			fmt.Println("No pre_start hook defined")
 		}
 
-		// Caller env (last wins)
-		for k, v := range req.Env {
-			container.Environment[k] = v
-		}
-
+		// Resource overrides — precedence: YAML default → legacy
+		// MemoryLimit/CPULimit → new MaxRamMb/MaxCpuCores. New fields
+		// take precedence so the tier row is the source of truth when
+		// supplied. JVM heap is also derived here so caller env (next
+		// step) can still override MEMORY explicitly.
 		if req.Resources.MemoryLimit > 0 {
 			container.MemoryLimit = req.Resources.MemoryLimit
 		}
 		if req.Resources.CPULimit > 0 {
 			container.CPULimit = req.Resources.CPULimit
+		}
+		effectiveMaxRamMb := req.Resources.MaxRamMb
+		if effectiveMaxRamMb > 0 {
+			container.MemoryLimit = effectiveMaxRamMb * 1024 * 1024
+			container.MemorySwap = container.MemoryLimit
+		}
+		if req.Resources.MaxCpuCores > 0 {
+			container.CPULimit = req.Resources.MaxCpuCores
+		}
+		effectiveJvmHeapMb := req.Resources.JvmHeapMb
+		if effectiveJvmHeapMb == 0 && effectiveMaxRamMb > 0 {
+			effectiveJvmHeapMb = effectiveMaxRamMb - 1536
+		}
+		if effectiveJvmHeapMb > 0 {
+			container.Environment["MEMORY"] = fmt.Sprintf("%dM", effectiveJvmHeapMb)
+		}
+
+		// Caller env (last wins) — caller-supplied MEMORY overrides the
+		// tier-derived heap above. Preserve this semantic.
+		for k, v := range req.Env {
+			container.Environment[k] = v
 		}
 
 		if err := capacity.tryAllocate(serverID, container.CPULimit, container.MemoryLimit); err != nil {
