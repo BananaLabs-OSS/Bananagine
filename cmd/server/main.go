@@ -590,6 +590,14 @@ func main() {
 				fmt.Println("No pre_start hook defined")
 			}
 
+			// DRIFT-RISK: this inline override mirrors pulp-cell/resources.Apply
+			// (same precedence, same heap formula, 8 unit tests). cmd/server is
+			// the legacy native build and lives in a separate go module from
+			// pulp-cell so it can't import the kernel directly. If you edit
+			// the math here, also update pulp-cell/resources/resources.go and
+			// re-run its tests. Long-term: promote `resources` to a shared
+			// repo so both modules can `require` it.
+			//
 			// Resource overrides — precedence: YAML default → legacy
 			// MemoryLimit/CPULimit → new MaxRamMb/MaxCpuCores. New fields
 			// take precedence so the tier row is the source of truth when

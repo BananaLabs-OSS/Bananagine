@@ -25,6 +25,8 @@ import (
 	"github.com/BananaLabs-OSS/Fiber/pulp/docker"
 	pulpgin "github.com/BananaLabs-OSS/Fiber/pulp/gin"
 	"github.com/BananaLabs-OSS/Fiber/pulp/gin/middleware"
+
+	"bananagine-cell/resources"
 )
 
 // orchestrationEventsPath is the SSE route for container lifecycle events.
@@ -527,38 +529,27 @@ func bootstrap(configBytes []byte) error {
 			fmt.Println("No pre_start hook defined")
 		}
 
-		// Resource overrides — precedence: YAML default → legacy
-		// MemoryLimit/CPULimit → new MaxRamMb/MaxCpuCores. New fields
-		// take precedence so the tier row is the source of truth when
-		// supplied. JVM heap is also derived here so caller env (next
-		// step) can still override MEMORY explicitly.
-		if req.Resources.MemoryLimit > 0 {
-			container.MemoryLimit = req.Resources.MemoryLimit
+		// Resource overrides + caller env merge — single source of truth
+		// at pulp-cell/resources.Apply (8 unit tests guard precedence:
+		// YAML → legacy MemoryLimit/CPULimit → new MaxRam/MaxCpu → caller
+		// env wins; JVM heap = MaxRamMb - 1536 when JvmHeapMb=0).
+		rc := resources.Container{
+			MemoryLimit: container.MemoryLimit,
+			CPULimit:    container.CPULimit,
+			MemorySwap:  container.MemorySwap,
+			Environment: container.Environment,
 		}
-		if req.Resources.CPULimit > 0 {
-			container.CPULimit = req.Resources.CPULimit
-		}
-		effectiveMaxRamMb := req.Resources.MaxRamMb
-		if effectiveMaxRamMb > 0 {
-			container.MemoryLimit = effectiveMaxRamMb * 1024 * 1024
-			container.MemorySwap = container.MemoryLimit
-		}
-		if req.Resources.MaxCpuCores > 0 {
-			container.CPULimit = req.Resources.MaxCpuCores
-		}
-		effectiveJvmHeapMb := req.Resources.JvmHeapMb
-		if effectiveJvmHeapMb == 0 && effectiveMaxRamMb > 0 {
-			effectiveJvmHeapMb = effectiveMaxRamMb - 1536
-		}
-		if effectiveJvmHeapMb > 0 {
-			container.Environment["MEMORY"] = fmt.Sprintf("%dM", effectiveJvmHeapMb)
-		}
-
-		// Caller env (last wins) — caller-supplied MEMORY overrides the
-		// tier-derived heap above. Preserve this semantic.
-		for k, v := range req.Env {
-			container.Environment[k] = v
-		}
+		resources.Apply(&rc, resources.Override{
+			MemoryLimit: req.Resources.MemoryLimit,
+			CPULimit:    req.Resources.CPULimit,
+			MaxCpuCores: req.Resources.MaxCpuCores,
+			MaxRamMb:    req.Resources.MaxRamMb,
+			JvmHeapMb:   req.Resources.JvmHeapMb,
+		}, req.Env)
+		container.MemoryLimit = rc.MemoryLimit
+		container.CPULimit = rc.CPULimit
+		container.MemorySwap = rc.MemorySwap
+		container.Environment = rc.Environment
 
 		if err := capacity.tryAllocate(serverID, container.CPULimit, container.MemoryLimit); err != nil {
 			releaseResources()
