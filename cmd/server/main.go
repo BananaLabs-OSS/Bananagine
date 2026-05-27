@@ -360,19 +360,6 @@ func main() {
 		c.JSON(200, result)
 	})
 
-	// Template config endpoint
-	// POST /reload-templates — hot reload templates from disk
-	r.POST("/reload-templates", func(c *gin.Context) {
-		count, err := reloadTemplates()
-		if err != nil {
-			log.Printf("[Reload] Failed to reload templates: %v", err)
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		log.Printf("[Reload] Reloaded %d templates", count)
-		c.JSON(200, gin.H{"reloaded": count})
-	})
-
 	r.GET("/templates/:name/config", func(c *gin.Context) {
 		name := c.Param("name")
 		tmpl, ok := getTemplates()[name]
@@ -540,7 +527,7 @@ func main() {
 				fmt.Println("Calling pre_start hook:", tmpl.Hooks.PreStart)
 
 				// Call the hook URL
-				resp, err := http.Get(tmpl.Hooks.PreStart)
+				resp, err := http.Post(tmpl.Hooks.PreStart, "application/json", nil)
 				if err != nil {
 					fmt.Println("Hook error:", err)
 					// Release allocated resources before returning
@@ -1157,6 +1144,18 @@ func main() {
 		adminGroup.Use(middleware.ServiceAuth(serviceToken))
 	}
 
+	// POST /admin/reload-templates — hot reload templates from disk
+	adminGroup.POST("/reload-templates", func(c *gin.Context) {
+		count, err := reloadTemplates()
+		if err != nil {
+			log.Printf("[Reload] Failed to reload templates: %v", err)
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		log.Printf("[Reload] Reloaded %d templates", count)
+		c.JSON(200, gin.H{"reloaded": count})
+	})
+
 	// POST /admin/build-image — trigger Docker image rebuild
 	adminGroup.POST("/build-image", func(c *gin.Context) {
 		var req struct {
@@ -1224,7 +1223,10 @@ func main() {
 
 	// GET /admin/build-status — check current build status
 	adminGroup.GET("/build-status", func(c *gin.Context) {
-		c.JSON(200, buildStatus)
+		buildMu.Lock()
+		status := buildStatus
+		buildMu.Unlock()
+		c.JSON(200, status)
 	})
 
 	server.ListenAndShutdown(config.ListenAddr, r, "Bananagine")
