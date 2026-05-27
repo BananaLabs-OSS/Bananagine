@@ -685,6 +685,7 @@ func bootstrap(configBytes []byte) error {
 					"rm -rf /data/world/",
 					"ls /data/",
 					"printf '",
+					"sed -i ",
 				} {
 					if len(arg) >= len(prefix) && arg[:len(prefix)] == prefix {
 						allowed = true
