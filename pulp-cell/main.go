@@ -664,11 +664,37 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		allowedExecCommands := map[string]bool{
-			"mcrcon": true,
+		if len(req.Cmd) == 0 {
+			c.JSON(400, pulpgin.H{"error": "cmd is required"})
+			return
 		}
-		if len(req.Cmd) == 0 || !allowedExecCommands[req.Cmd[0]] {
-			c.JSON(400, pulpgin.H{"error": "Command not allowed. Only RCON commands are permitted."})
+		allowed := false
+		switch req.Cmd[0] {
+		case "mcrcon":
+			allowed = true
+		case "sh":
+			if len(req.Cmd) == 3 && req.Cmd[1] == "-c" {
+				arg := req.Cmd[2]
+				for _, prefix := range []string{
+					"mcrcon ",
+					"(test -f /data/",
+					"test -f /data/",
+					"gzip -t /data/",
+					"cat /data/",
+					"touch /data/",
+					"rm -rf /data/world/",
+					"ls /data/",
+					"printf '",
+				} {
+					if len(arg) >= len(prefix) && arg[:len(prefix)] == prefix {
+						allowed = true
+						break
+					}
+				}
+			}
+		}
+		if !allowed {
+			c.JSON(400, pulpgin.H{"error": "Command not allowed"})
 			return
 		}
 		output, err := docker.Exec(id, req.Cmd)

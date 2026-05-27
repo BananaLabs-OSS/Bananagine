@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"bufio"
 	"bytes"
 	"os"
@@ -124,17 +125,18 @@ func readDiskUsage(path string) (total, used uint64) {
 	}
 	f.Close()
 
-	// Use df command as a portable fallback
-	// Output: "total used" in 1K blocks
-	cmd := fmt.Sprintf("df -k '%s' | tail -1 | awk '{print $2, $3}'", path)
-	out, err := execCommand("sh", "-c", cmd)
+	out, err := execCommand("df", "-k", path)
 	if err != nil {
 		return 0, 0
 	}
-	fields := strings.Fields(strings.TrimSpace(out))
-	if len(fields) >= 2 {
-		t, _ := strconv.ParseUint(fields[0], 10, 64)
-		u, _ := strconv.ParseUint(fields[1], 10, 64)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		return 0, 0
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) >= 3 {
+		t, _ := strconv.ParseUint(fields[1], 10, 64)
+		u, _ := strconv.ParseUint(fields[2], 10, 64)
 		return t * 1024, u * 1024 // kB to bytes
 	}
 	return 0, 0
@@ -382,11 +384,10 @@ func main() {
 	})
 
 	// Service auth middleware (protects orchestration, registry, admin)
-	if serviceToken != "" {
-		log.Printf("Service auth enabled (X-Service-Token required)")
-	} else {
-		log.Printf("WARNING: SERVICE_TOKEN not set — all endpoints are unprotected")
+	if serviceToken == "" {
+		log.Fatal("SERVICE_TOKEN is required. Set SERVICE_TOKEN environment variable.")
 	}
+	log.Printf("Service auth enabled (X-Service-Token required)")
 
 	// Orchestration routes
 	orchestration := r.Group("/orchestration")
@@ -760,6 +761,15 @@ func main() {
 				return
 			}
 
+			allowedExecCommands := map[string]bool{
+				"mcrcon": true,
+				"sh":     true,
+			}
+			if !allowedExecCommands[req.Cmd[0]] {
+				c.JSON(400, gin.H{"error": "Command not allowed"})
+				return
+			}
+
 			output, err := provider.Exec(ctx, id, req.Cmd)
 			if err != nil {
 				if errdefs.IsNotFound(err) {
@@ -886,6 +896,13 @@ func main() {
 				worldsBase = "/var/sessions/worlds"
 			}
 			worldDir := filepath.Join(worldsBase, name)
+
+			absWorld, _ := filepath.Abs(worldDir)
+			absBase, _ := filepath.Abs(worldsBase)
+			if !strings.HasPrefix(absWorld, absBase+string(filepath.Separator)) {
+				c.JSON(400, gin.H{"error": "invalid name"})
+				return
+			}
 
 			info, err := os.Stat(worldDir)
 			if err != nil || !info.IsDir() {
@@ -1152,6 +1169,12 @@ func main() {
 		}
 		if req.ImageTag == "" {
 			c.JSON(400, gin.H{"error": "image_tag required"})
+			return
+		}
+
+		tagPattern := regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*:[a-zA-Z0-9._-]+$`)
+		if !tagPattern.MatchString(req.ImageTag) {
+			c.JSON(400, gin.H{"error": "invalid image tag format"})
 			return
 		}
 
