@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -274,7 +275,9 @@ func bootstrap(configBytes []byte) error {
 				continue
 			}
 			if s.CPULimit > 0 || s.MemoryLimit > 0 {
-				_ = capacity.tryAllocate(s.ID, s.CPULimit, s.MemoryLimit)
+				if err := capacity.tryAllocate(s.ID, s.CPULimit, s.MemoryLimit); err != nil {
+					log.Printf("[Reconcile] capacity allocation failed for %s: %v", s.ID, err)
+				}
 				reconciled++
 			}
 		}
@@ -661,8 +664,11 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		if len(req.Cmd) == 0 {
-			c.JSON(400, pulpgin.H{"error": "cmd is required"})
+		allowedExecCommands := map[string]bool{
+			"mcrcon": true,
+		}
+		if len(req.Cmd) == 0 || !allowedExecCommands[req.Cmd[0]] {
+			c.JSON(400, pulpgin.H{"error": "Command not allowed. Only RCON commands are permitted."})
 			return
 		}
 		output, err := docker.Exec(id, req.Cmd)
@@ -1160,6 +1166,17 @@ func walkAndZip(zw *zip.Writer, dir, prefix string) error {
 	for _, e := range entries {
 		relPath := prefix + e.Name
 		fullPath := dir + "/" + e.Name
+
+		// Reject symlinks — prevent zip-slip and path-traversal via
+		// crafted symlinks inside world directories.
+		info, err := pulp.FS.Stat(fullPath)
+		if err != nil {
+			return err
+		}
+		if os.FileMode(info.Mode)&os.ModeSymlink != 0 {
+			continue // skip symlinks
+		}
+
 		if e.IsDir {
 			if err := walkAndZip(zw, fullPath, relPath+"/"); err != nil {
 				return err
