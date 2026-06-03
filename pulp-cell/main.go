@@ -199,46 +199,94 @@ type createServerRequest struct {
 // that began with an allowed prefix (e.g. `cat /data/x; <arbitrary>`) reached
 // the container shell and ran arbitrary commands — in-container RCE. The fix is
 // to match the ENTIRE command string against anchored (`^…$`) patterns that pin
-// each legitimate operation's command skeleton. A trailing `; <cmd>`, `&& <cmd>`
-// or `$(<cmd>)` can no longer ride along because it would fall outside the
-// anchored skeleton and fail the match.
+// each legitimate operation's command skeleton.
 //
-// Caller-supplied values (motd, seeds, URLs, ops/ban JSON) are only ever
-// accepted INSIDE single-quoted regions. The trusted caller shell-escapes them
-// with the POSIX `'\''` idiom, so a single-quoted span — matched by sqArg below
-// — cannot break out of its quotes regardless of the bytes it contains. The
-// skeleton (everything outside the quotes) is fixed and metacharacter-controlled
-// by these patterns, not by the caller.
+// IMPORTANT — patterns are reconciled against the REAL Evolution caller
+// (Evolution/pulp-cell: whitelist.go, sync.go, router.go, transitions.go,
+// admin.go), NOT an imagined mcrcon shape. The deployed caller uses:
+//   - an in-container `rcon` wrapper (argv `["rcon", <cmd>]`, and `sh -c`
+//     batches like `rcon 'gamerule x true'; rcon 'save-all flush'`, plus
+//     `$(rcon 'gamerule x')` gamerule reads) — NOT `mcrcon -H…`;
+//   - `; `-joined batches (not `&& sleep N &&`);
+//   - sed substitutions on /data/server.properties with BARE (not quoted)
+//     property values that may legitimately contain `/` (e.g. MOTD "Best 24/7").
+//
+// Security boundary — what pins the STRUCTURE vs. what carries USER VALUES:
+//   - The legit structure may use shell metacharacters (`;`, `&&`, `$()`,
+//     `|`) because they are part of the FIXED, anchored skeleton, not the
+//     caller's free input.
+//   - Every user-influenced value (motd, seed, world name, gamerule value,
+//     ops/ban JSON, URLs, datapack filenames) is confined to a span that a
+//     malicious value cannot break out of:
+//       * Single-quoted spans (URLs, base64, datapack paths) use sqArg, which
+//         only admits non-quote bytes plus the POSIX `'\''` splice — the
+//         caller escapes embedded quotes, so the span cannot close its quoting.
+//       * BARE sed property values use propVal: the only character that could
+//         escape the surrounding `sed -i '…'` single-quote wrapper is a raw
+//         single quote, so propVal forbids `'` (and a literal newline). The
+//         caller's sanitizeProperty already strips `' " ; $ ` \ | &` and
+//         newlines, so propVal is a superset-safe gate that ALSO admits `/`
+//         (the MEDIUM motd-slash fix) without permitting a quote breakout.
+//       * gamerule rule/value tokens are constrained to identifier/boolean/
+//         integer classes (no metacharacters reach the shell from them).
 const (
 	// sqArg matches a POSIX single-quoted argument body: any run of
 	// non-quote bytes, with embedded quotes written as the `'\''` splice.
 	// Used for the regions where the caller injects escaped free-form values.
 	sqArg = `(?:[^']|'\\'')*`
-	// rconHdr is the fixed mcrcon connection header used by every RCON call.
-	rconHdr = `mcrcon -H 127\.0\.0\.1 -P 25575 -p [A-Za-z0-9_-]+`
+	// propVal is a BARE server.properties value as emitted by the caller's
+	// sed substitution. It sits inside `sed -i 's/^KEY=.*/KEY=<propVal>/' …`,
+	// i.e. wrapped in single quotes by the FIXED skeleton. The only byte that
+	// could terminate that wrapper is a single quote, so propVal excludes `'`
+	// (and a literal newline, which an anchored match must not span). `/` IS
+	// admitted — it is harmless to the gate and is required for slash-bearing
+	// MOTDs/URLs; sed-level `/` correctness is the caller's concern.
+	propVal = `[^'\n]*`
+	// ruleTok pins the user-influenced rule name in a `gamerule <rule>` read.
+	// Rule names are MC identifiers (the caller's allowedRules map), so the
+	// `$(rcon 'gamerule <rule>')` substitution cannot smuggle metacharacters.
+	// (The gamerule WRITE path, `rcon 'gamerule <rule> <value>'`, is matched by
+	// the generic rcon single-quoted-batch pattern below — both rule and value
+	// sit inside one injection-safe sqArg span.)
+	ruleTok = `[A-Za-z0-9_]+`
 )
 
-// execAllowPatterns is the exhaustive set of legitimate exec command shapes,
-// each anchored end-to-end. Notably the sed pattern permits ONLY the
+// execAllowPatterns is the exhaustive set of legitimate `sh -c` exec command
+// shapes, each anchored end-to-end. Notably the sed pattern permits ONLY the
 // `s/^KEY=.*/KEY=VALUE/` substitution against /data/server.properties and
 // forbids GNU sed's `e`/`w`/`r` commands (which the bare `sed -i ` prefix used
 // to allow — those run a shell command / read-write arbitrary files).
 var execAllowPatterns = []*regexp.Regexp{
-	// RCON: one or more single-quoted command args, optionally `&& sleep N &&`-
-	// joined into a batch, each with an optional 2>/dev/null.
-	regexp.MustCompile(`^` + rconHdr + `( '` + sqArg + `')+( 2>/dev/null)?( && sleep [0-9.]+ && ` + rconHdr + `( '` + sqArg + `')+( 2>/dev/null)?)*$`),
-	// gamerule read loop: echo "RULE:rule:$(mcrcon … 'gamerule rule' 2>/dev/null)" lines.
-	regexp.MustCompile(`^(echo "RULE:[A-Za-z0-9_]+:\$\(` + rconHdr + ` 'gamerule [A-Za-z0-9_]+' 2>/dev/null\)"\n?)+$`),
+	// RCON write batch (gamerules + console): one or more `rcon '<cmd>'`
+	// invocations `; `-joined, each with an optional `2>/dev/null`. The
+	// per-command body is a single-quoted sqArg span; the gamerule path emits
+	// e.g. `rcon 'gamerule keepInventory true'; rcon 'save-all flush'`.
+	regexp.MustCompile(`^rcon '` + sqArg + `'( 2>/dev/null)?(; rcon '` + sqArg + `'( 2>/dev/null)?)*$`),
+	// RCON status poll with multiple quoted args: `rcon 'tps' 'list' 2>/dev/null`.
+	regexp.MustCompile(`^rcon( '` + sqArg + `')+( 2>/dev/null)?$`),
+	// gamerule read loop: one or more
+	//   echo "RULE:<rule>:$(rcon 'gamerule <rule>' 2>/dev/null)"
+	// lines, newline-separated.
+	regexp.MustCompile(`^(echo "RULE:` + ruleTok + `:\$\(rcon 'gamerule ` + ruleTok + `' 2>/dev/null\)"\n?)+$`),
 	// Read JSON-or-empty: (test -f /data/F && cat /data/F) || echo '[]'.
 	regexp.MustCompile(`^\(test -f /data/[A-Za-z0-9._-]+ && cat /data/[A-Za-z0-9._-]+\) \|\| echo '\[\]'$`),
+	// Read a /data file, empty on absence: cat /data/F 2>/dev/null || true.
+	// Covers ops.json / banned-players.json reconciliation reads (sync.go).
+	regexp.MustCompile(`^cat /data/[A-Za-z0-9._-]+ 2>/dev/null \|\| true$`),
 	// Read server.properties: cat /data/server.properties 2>/dev/null || echo ''.
 	regexp.MustCompile(`^cat /data/server\.properties 2>/dev/null \|\| echo ''$`),
 	// List datapacks: ls /data/world/datapacks/ 2>/dev/null || echo ''.
 	regexp.MustCompile(`^ls /data/world/datapacks/ 2>/dev/null \|\| echo ''$`),
 	// Write a /data file from caller content: printf '%s' '<escaped>' > /data/F.
 	regexp.MustCompile(`^printf '%s' '` + sqArg + `' > /data/[A-Za-z0-9._-]+$`),
+	// Write a /data file from base64: echo '<b64>' | base64 -d > /data/F.
+	// Covers ops.json / banned-players.json persistence (sync.go).
+	regexp.MustCompile(`^echo '[A-Za-z0-9+/=]*' \| base64 -d > /data/[A-Za-z0-9._-]+$`),
 	// server.properties edit: sed substitution only, fixed file, no e/w/r.
-	regexp.MustCompile(`^sed -i 's/\^[A-Za-z0-9_-]+=\.\*/[A-Za-z0-9_:.-]*=[^'/]*/' /data/server\.properties$`),
+	// The replacement value is a BARE propVal span (no `'`, no newline) so a
+	// hostile value cannot escape the `sed -i '…'` single-quote wrapper, while
+	// `/`-bearing values (slash MOTDs) are now permitted.
+	regexp.MustCompile(`^sed -i 's/\^[A-Za-z0-9_-]+=\.\*/[A-Za-z0-9_:.-]*=` + propVal + `/' /data/server\.properties$`),
 	// World presence/integrity checks.
 	regexp.MustCompile(`^test -f /data/world/[A-Za-z0-9._/-]+$`),
 	regexp.MustCompile(`^gzip -t /data/world/[A-Za-z0-9._/-]+$`),
@@ -248,21 +296,30 @@ var execAllowPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^rm -rf (/data/world/[A-Za-z0-9._/-]+)( /data/world/[A-Za-z0-9._/-]+)*$`),
 	// World restore: mkdir && cd && wget url && unzip && rm.
 	regexp.MustCompile(`^mkdir -p /data/world && cd /data/world && wget -qO /tmp/backup\.zip '` + sqArg + `' && unzip -qo /tmp/backup\.zip && rm /tmp/backup\.zip$`),
-	// Datapack install / remove.
-	regexp.MustCompile(`^mkdir -p /data/world/datapacks && wget -qO '` + sqArg + `' '` + sqArg + `'$`),
-	regexp.MustCompile(`^rm -f '` + sqArg + `'$`),
+	// Datapack install / remove. The on-disk path is pinned to
+	// /data/world/datapacks/<safeName> where safeName is the caller's
+	// safeFilenameRe class ([a-zA-Z0-9._-], slashes already collapsed) — it
+	// cannot escape the datapacks dir. The install URL is a free single-quoted
+	// sqArg span (presigned R2 or quote-rejected direct URL).
+	regexp.MustCompile(`^mkdir -p /data/world/datapacks && wget -qO '/data/world/datapacks/[A-Za-z0-9._-]+' '` + sqArg + `'$`),
+	regexp.MustCompile(`^rm -f '/data/world/datapacks/[A-Za-z0-9._-]+'$`),
 }
 
 // execCommandAllowed is the authorization gate for the in-container exec
-// handler. `mcrcon` in argv form is inert (docker.Exec passes argv to the host
-// with no shell). For `sh -c <str>`, the whole string must match one anchored
-// allow pattern; partial/prefix matches no longer pass.
+// handler. `mcrcon` and the `rcon` wrapper in argv form are inert (docker.Exec
+// passes argv straight to the host with no shell, so every element is a literal
+// — no metacharacter interpretation). For `sh -c <str>`, the whole string must
+// match one anchored allow pattern; partial/prefix matches do not pass.
 func execCommandAllowed(cmd []string) bool {
 	if len(cmd) == 0 {
 		return false
 	}
-	if cmd[0] == "mcrcon" {
-		// Direct argv form — no host shell, so every element is an inert literal.
+	if cmd[0] == "mcrcon" || cmd[0] == "rcon" {
+		// Direct argv form — no host shell, so every element is an inert
+		// literal. This is the dominant console path: sendConsoleCommand,
+		// admin console, tellraw, whitelist/op/ban/gamemode/time/weather, the
+		// save-off/save-all/save-on backup quiesce, and the update/expiry
+		// countdown broadcasts all reach the cell as `["rcon", <cmd>]`.
 		return true
 	}
 	if cmd[0] != "sh" || len(cmd) != 3 || cmd[1] != "-c" {
