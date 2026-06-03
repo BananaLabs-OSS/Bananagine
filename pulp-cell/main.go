@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -192,10 +193,102 @@ type createServerRequest struct {
 	} `json:"resources,omitempty"`
 }
 
+// Exec authorization, whole-string allowlist.
+//
+// The previous gate matched only a PREFIX of the `sh -c` string, so any string
+// that began with an allowed prefix (e.g. `cat /data/x; <arbitrary>`) reached
+// the container shell and ran arbitrary commands — in-container RCE. The fix is
+// to match the ENTIRE command string against anchored (`^…$`) patterns that pin
+// each legitimate operation's command skeleton. A trailing `; <cmd>`, `&& <cmd>`
+// or `$(<cmd>)` can no longer ride along because it would fall outside the
+// anchored skeleton and fail the match.
+//
+// Caller-supplied values (motd, seeds, URLs, ops/ban JSON) are only ever
+// accepted INSIDE single-quoted regions. The trusted caller shell-escapes them
+// with the POSIX `'\''` idiom, so a single-quoted span — matched by sqArg below
+// — cannot break out of its quotes regardless of the bytes it contains. The
+// skeleton (everything outside the quotes) is fixed and metacharacter-controlled
+// by these patterns, not by the caller.
+const (
+	// sqArg matches a POSIX single-quoted argument body: any run of
+	// non-quote bytes, with embedded quotes written as the `'\''` splice.
+	// Used for the regions where the caller injects escaped free-form values.
+	sqArg = `(?:[^']|'\\'')*`
+	// rconHdr is the fixed mcrcon connection header used by every RCON call.
+	rconHdr = `mcrcon -H 127\.0\.0\.1 -P 25575 -p [A-Za-z0-9_-]+`
+)
+
+// execAllowPatterns is the exhaustive set of legitimate exec command shapes,
+// each anchored end-to-end. Notably the sed pattern permits ONLY the
+// `s/^KEY=.*/KEY=VALUE/` substitution against /data/server.properties and
+// forbids GNU sed's `e`/`w`/`r` commands (which the bare `sed -i ` prefix used
+// to allow — those run a shell command / read-write arbitrary files).
+var execAllowPatterns = []*regexp.Regexp{
+	// RCON: one or more single-quoted command args, optionally `&& sleep N &&`-
+	// joined into a batch, each with an optional 2>/dev/null.
+	regexp.MustCompile(`^` + rconHdr + `( '` + sqArg + `')+( 2>/dev/null)?( && sleep [0-9.]+ && ` + rconHdr + `( '` + sqArg + `')+( 2>/dev/null)?)*$`),
+	// gamerule read loop: echo "RULE:rule:$(mcrcon … 'gamerule rule' 2>/dev/null)" lines.
+	regexp.MustCompile(`^(echo "RULE:[A-Za-z0-9_]+:\$\(` + rconHdr + ` 'gamerule [A-Za-z0-9_]+' 2>/dev/null\)"\n?)+$`),
+	// Read JSON-or-empty: (test -f /data/F && cat /data/F) || echo '[]'.
+	regexp.MustCompile(`^\(test -f /data/[A-Za-z0-9._-]+ && cat /data/[A-Za-z0-9._-]+\) \|\| echo '\[\]'$`),
+	// Read server.properties: cat /data/server.properties 2>/dev/null || echo ''.
+	regexp.MustCompile(`^cat /data/server\.properties 2>/dev/null \|\| echo ''$`),
+	// List datapacks: ls /data/world/datapacks/ 2>/dev/null || echo ''.
+	regexp.MustCompile(`^ls /data/world/datapacks/ 2>/dev/null \|\| echo ''$`),
+	// Write a /data file from caller content: printf '%s' '<escaped>' > /data/F.
+	regexp.MustCompile(`^printf '%s' '` + sqArg + `' > /data/[A-Za-z0-9._-]+$`),
+	// server.properties edit: sed substitution only, fixed file, no e/w/r.
+	regexp.MustCompile(`^sed -i 's/\^[A-Za-z0-9_-]+=\.\*/[A-Za-z0-9_:.-]*=[^'/]*/' /data/server\.properties$`),
+	// World presence/integrity checks.
+	regexp.MustCompile(`^test -f /data/world/[A-Za-z0-9._/-]+$`),
+	regexp.MustCompile(`^gzip -t /data/world/[A-Za-z0-9._/-]+$`),
+	// Touch a sentinel file under /data.
+	regexp.MustCompile(`^touch /data/[A-Za-z0-9._-]+$`),
+	// World wipe: rm -rf of an explicit list of /data/world/ paths only.
+	regexp.MustCompile(`^rm -rf (/data/world/[A-Za-z0-9._/-]+)( /data/world/[A-Za-z0-9._/-]+)*$`),
+	// World restore: mkdir && cd && wget url && unzip && rm.
+	regexp.MustCompile(`^mkdir -p /data/world && cd /data/world && wget -qO /tmp/backup\.zip '` + sqArg + `' && unzip -qo /tmp/backup\.zip && rm /tmp/backup\.zip$`),
+	// Datapack install / remove.
+	regexp.MustCompile(`^mkdir -p /data/world/datapacks && wget -qO '` + sqArg + `' '` + sqArg + `'$`),
+	regexp.MustCompile(`^rm -f '` + sqArg + `'$`),
+}
+
+// execCommandAllowed is the authorization gate for the in-container exec
+// handler. `mcrcon` in argv form is inert (docker.Exec passes argv to the host
+// with no shell). For `sh -c <str>`, the whole string must match one anchored
+// allow pattern; partial/prefix matches no longer pass.
+func execCommandAllowed(cmd []string) bool {
+	if len(cmd) == 0 {
+		return false
+	}
+	if cmd[0] == "mcrcon" {
+		// Direct argv form — no host shell, so every element is an inert literal.
+		return true
+	}
+	if cmd[0] != "sh" || len(cmd) != 3 || cmd[1] != "-c" {
+		return false
+	}
+	arg := cmd[2]
+	for _, pat := range execAllowPatterns {
+		if pat.MatchString(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 func bootstrap(configBytes []byte) error {
 	cfg, err := parseConfig(configBytes)
 	if err != nil {
 		return fmt.Errorf("parse config: %w", err)
+	}
+
+	// Fail closed: refuse to start without a service token rather than
+	// silently leaving every orchestration/registry/admin route (including
+	// the in-container exec handler) open to the network. Mirrors native
+	// cmd/server's H2 log.Fatal posture.
+	if cfg.ServiceToken == "" {
+		return fmt.Errorf("SERVICE_TOKEN is required: refusing to start with auth disabled")
 	}
 
 	templates, err := loadTemplates(cfg.TemplateFiles)
@@ -320,17 +413,10 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(200, result)
 	})
 
-	r.POST("/reload-templates", func(c *pulpgin.Context) {
-		fresh, err := loadTemplates(cfg.TemplateFiles)
-		if err != nil {
-			log.Printf("[Reload] Failed to reload templates: %v", err)
-			c.JSON(500, pulpgin.H{"error": err.Error()})
-			return
-		}
-		templates = fresh
-		log.Printf("[Reload] Reloaded %d templates", len(templates))
-		c.JSON(200, pulpgin.H{"reloaded": len(templates)})
-	})
+	// NOTE: /reload-templates is a mutating, disk-reading endpoint and is
+	// registered under the auth'd /admin group below (see "--- Admin ---"),
+	// matching native cmd/server M7. It MUST NOT be registered on the bare
+	// router here, where it would be reachable with no service token.
 
 	r.GET("/templates/:name/config", func(c *pulpgin.Context) {
 		name := c.Param("name")
@@ -344,13 +430,9 @@ func bootstrap(configBytes []byte) error {
 
 	// --- Orchestration ---
 
-	// Mirror upstream cmd/server/main.go bootstrap log: announce whether
-	// service auth is enforced so operators can spot unprotected deployments.
-	if cfg.ServiceToken != "" {
-		log.Printf("Service auth enabled (X-Service-Token required)")
-	} else {
-		log.Printf("WARNING: SERVICE_TOKEN not set — all endpoints are unprotected")
-	}
+	// Mirror upstream cmd/server/main.go bootstrap log. The empty-token case
+	// is rejected in bootstrap above (fail closed), so auth is always enforced.
+	log.Printf("Service auth enabled (X-Service-Token required)")
 
 	auth := authMiddleware(cfg.ServiceToken)
 	orch := r.Group("/orchestration", auth)
@@ -668,33 +750,7 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(400, pulpgin.H{"error": "cmd is required"})
 			return
 		}
-		allowed := false
-		switch req.Cmd[0] {
-		case "mcrcon":
-			allowed = true
-		case "sh":
-			if len(req.Cmd) == 3 && req.Cmd[1] == "-c" {
-				arg := req.Cmd[2]
-				for _, prefix := range []string{
-					"mcrcon ",
-					"(test -f /data/",
-					"test -f /data/",
-					"gzip -t /data/",
-					"cat /data/",
-					"touch /data/",
-					"rm -rf /data/world/",
-					"ls /data/",
-					"printf '",
-					"sed -i ",
-				} {
-					if len(arg) >= len(prefix) && arg[:len(prefix)] == prefix {
-						allowed = true
-						break
-					}
-				}
-			}
-		}
-		if !allowed {
+		if !execCommandAllowed(req.Cmd) {
 			c.JSON(400, pulpgin.H{"error": "Command not allowed"})
 			return
 		}
@@ -1017,6 +1073,20 @@ func bootstrap(configBytes []byte) error {
 
 	admin := r.Group("/admin", auth)
 
+	// Auth-gated template reload (native cmd/server M7). Mutates in-memory
+	// templates and re-scans disk, so it sits behind the service token.
+	admin.POST("/reload-templates", func(c *pulpgin.Context) {
+		fresh, err := loadTemplates(cfg.TemplateFiles)
+		if err != nil {
+			log.Printf("[Reload] Failed to reload templates: %v", err)
+			c.JSON(500, pulpgin.H{"error": err.Error()})
+			return
+		}
+		templates = fresh
+		log.Printf("[Reload] Reloaded %d templates", len(templates))
+		c.JSON(200, pulpgin.H{"reloaded": len(templates)})
+	})
+
 	admin.POST("/build-image", func(c *pulpgin.Context) {
 		var req struct {
 			BuildArgs map[string]string `json:"build_args"`
@@ -1225,9 +1295,11 @@ func walkAndZip(zw *zip.Writer, dir, prefix string) error {
 	return nil
 }
 
+// authMiddleware gates a route group on the X-Service-Token. It always
+// returns the real ServiceAuth check; bootstrap refuses to start when the
+// token is empty (fail closed), so this never produces a pass-through.
+// Matches native cmd/server's H2 posture — an empty token must reject every
+// authed request, never accept an empty-token match.
 func authMiddleware(token string) pulpgin.HandlerFunc {
-	if token == "" {
-		return func(c *pulpgin.Context) { c.Next() }
-	}
 	return middleware.ServiceAuth(token)
 }
