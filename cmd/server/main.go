@@ -748,11 +748,7 @@ func main() {
 				return
 			}
 
-			allowedExecCommands := map[string]bool{
-				"mcrcon": true,
-				"sh":     true,
-			}
-			if !allowedExecCommands[req.Cmd[0]] {
+			if !execCommandAllowed(req.Cmd) {
 				c.JSON(400, gin.H{"error": "Command not allowed"})
 				return
 			}
