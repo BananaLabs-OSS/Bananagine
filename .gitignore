@@ -35,6 +35,9 @@ go.work.sum
 !templates/*.json
 
 pulp-cell/*.wasm
+# Extensionless WASM outputs (pulp cell + old plugin name, no .wasm extension)
+pulp-cell/bananagine-cell
+pulp-cell/bananagine-plugin
 pulp-cell/data/
 pulp-deployment/app
 pulp-deployment/data/
