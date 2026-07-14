@@ -1,0 +1,13 @@
+# Example template — demonstrates the Bananagine template schema.
+# Copy and adapt for your own deployment. Uses a public image; not a
+# production configuration. See README.md (#Templates) for all fields.
+name: example-minecraft
+game: minecraft
+label: Example Minecraft Server
+container:
+  image: itzg/minecraft-server:latest
+  ports:
+    - host: 0
+      container: 25565
+      protocol: tcp
+      name: java
