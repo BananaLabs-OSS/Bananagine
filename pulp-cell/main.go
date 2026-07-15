@@ -781,6 +781,8 @@ func bootstrap(configBytes []byte) error {
 				"allocated_memory": allocMem,
 				"disk_total":       cfg.NodeDiskTotal,
 				"disk_used":        cfg.NodeDiskUsed,
+				"cpu_budget":       cfg.CPUBudget,
+				"memory_budget":    cfg.MemBudget,
 			},
 		})
 	})
