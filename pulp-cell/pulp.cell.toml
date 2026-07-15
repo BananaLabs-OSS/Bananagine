@@ -21,8 +21,8 @@ port_pool_start = 5521
 port_pool_end = 5599
 external_host = "${EXTERNAL_HOST}"
 service_token = "${SERVICE_TOKEN}"
-cpu_budget = 0
-memory_budget = 0
+cpu_budget = ${CPU_BUDGET}
+memory_budget = ${MEMORY_BUDGET}
 worlds_dir = "/var/sessions/worlds"
 # Node hardware descriptors — surface through /orchestration/stats.node.
 # WASM can't read /proc, so the operator fills these in here (bytes for
