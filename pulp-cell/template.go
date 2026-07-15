@@ -22,9 +22,24 @@ type ConfigOption struct {
 	Hint    string   `yaml:"hint,omitempty" json:"hint,omitempty"`
 }
 
+// EngineOption is a selectable server engine, declared per game in the template
+// YAML so the configurator renders engine choices from sidecar data instead of
+// hardcoding them. `Platforms` gates the player-platform pickers; `Mods` names
+// the modification method offered (fabric / datapacks / addons).
+type EngineOption struct {
+	Value     string   `yaml:"value" json:"value"`
+	Label     string   `yaml:"label" json:"label"`
+	Hint      string   `yaml:"hint,omitempty" json:"hint,omitempty"`
+	Platforms []string `yaml:"platforms,omitempty" json:"platforms,omitempty"`
+	Mods      string   `yaml:"mods,omitempty" json:"mods,omitempty"`
+	Group     string   `yaml:"group,omitempty" json:"group,omitempty"`
+	Default   bool     `yaml:"default,omitempty" json:"default,omitempty"`
+}
+
 type ConfigSchema struct {
 	Settings  map[string]ConfigOption `yaml:"settings,omitempty" json:"settings,omitempty"`
 	GameRules map[string]ConfigOption `yaml:"game_rules,omitempty" json:"game_rules,omitempty"`
+	Engines   []EngineOption          `yaml:"engines,omitempty" json:"engines,omitempty"`
 }
 
 type PortSpec struct {
