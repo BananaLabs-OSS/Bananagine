@@ -447,6 +447,41 @@ func bootstrap(configBytes []byte) error {
 
 		container := deepCopyContainer(tmpl.Container)
 
+		// Platform-aware port filtering. A game template can declare ports for
+		// several player platforms (minecraft: java + bedrock), but a server only
+		// exposes the platforms its selected engine supports. Without this, EVERY
+		// minecraft server got a bedrock port even for a Java-only engine with
+		// crossplay off — a dead Geyser port (mc-f7613, 2026-07-20). We keep a
+		// platform-named port (java/bedrock) only when that platform is active for
+		// the chosen engine; crossplay extends a Java engine to also serve Bedrock.
+		if len(tmpl.Config.Engines) > 0 && len(container.Ports) > 0 {
+			active := map[string]bool{}
+			for _, e := range tmpl.Config.Engines {
+				if e.Value == req.Env["ENGINE"] {
+					for _, p := range e.Platforms {
+						active[p] = true
+					}
+					break
+				}
+			}
+			if req.Env["_CROSSPLAY"] == "true" {
+				active["bedrock"] = true
+			}
+			// Only filter once we've resolved the engine's platforms; an unknown or
+			// absent engine keeps every port (safe back-compat for games without a
+			// platform model, and for older callers that don't send ENGINE).
+			if len(active) > 0 {
+				kept := container.Ports[:0]
+				for _, p := range container.Ports {
+					if (p.Name == "java" || p.Name == "bedrock") && !active[p.Name] {
+						continue
+					}
+					kept = append(kept, p)
+				}
+				container.Ports = kept
+			}
+		}
+
 		serverID := req.ServerID
 		if serverID == "" {
 			serverID = fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
