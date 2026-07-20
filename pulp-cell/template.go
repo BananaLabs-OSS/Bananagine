@@ -75,6 +75,10 @@ type Template struct {
 	Server    map[string]string `yaml:"server" json:"server"`
 	Hooks     Hooks             `yaml:"hooks" json:"hooks"`
 	Config    ConfigSchema      `yaml:"config" json:"config"`
+	// Engine this template serves ("" = the game's primary/default image; a
+	// specific value like "bedrock" = a dedicated variant image that engine
+	// routes to).
+	Engine string `yaml:"engine,omitempty" json:"engine,omitempty"`
 }
 
 // loadTemplates reads every *.yaml file under the cell's templates/

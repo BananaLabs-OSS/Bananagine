@@ -359,6 +359,7 @@ func bootstrap(configBytes []byte) error {
 			Name        string  `json:"name"`
 			Game        string  `json:"game"`
 			Label       string  `json:"label"`
+			Engine      string  `json:"engine,omitempty"`
 			CPULimit    float64 `json:"cpu_limit"`
 			MemoryLimit int64   `json:"memory_limit"`
 		}
@@ -368,6 +369,7 @@ func bootstrap(configBytes []byte) error {
 				Name:        t.Name,
 				Game:        t.Game,
 				Label:       t.Label,
+				Engine:      t.Engine,
 				CPULimit:    t.Container.CPULimit,
 				MemoryLimit: t.Container.MemoryLimit,
 			})
