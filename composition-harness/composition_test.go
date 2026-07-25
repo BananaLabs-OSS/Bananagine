@@ -250,7 +250,11 @@ func TestProductionBundleWiring(t *testing.T) {
 		}
 	}
 
-	assertContainsFile(t, filepath.Join(devRoot, "deploy", "gameserver", "deploy.sh"), "\n  Pulp-Lua\n")
+	assertContainsFile(t, filepath.Join(devRoot, "deploy", "gameserver", "deploy.sh"),
+		"This consumes an already staged source bundle. It intentionally does not pull",
+		"Pulp-Lua deliberately does not appear in REQUIRED_GIT_REPOS.",
+		`lua_sha="$(hash_unowned_go_source "$SOURCE_ROOT/Pulp-Lua")"`,
+		`printf 'Pulp-Lua tree:%s\n' "$lua_sha" >>"$output"`)
 }
 
 func build(t *testing.T, dir, output, goCache string, wasm bool) string {
