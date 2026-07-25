@@ -2,7 +2,16 @@ name = "bananagine-registry"
 version = "0.1.0"
 wasm = "bananagine-registry.wasm"
 
-provides = ["bananagine.registry.v1"]
+provides = [
+  "bananagine.registry.v1.register",
+  "bananagine.registry.v1.list",
+  "bananagine.registry.v1.get",
+  "bananagine.registry.v1.update",
+  "bananagine.registry.v1.unregister",
+  "bananagine.registry.v1.set_players",
+  "bananagine.registry.v1.put_match",
+  "bananagine.registry.v1.remove_match",
+]
 consumes = []
 depends_on = []
 

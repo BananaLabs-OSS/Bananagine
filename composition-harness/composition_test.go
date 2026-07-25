@@ -203,12 +203,15 @@ func TestProductionBundleWiring(t *testing.T) {
 	devRoot := filepath.Dir(repoRoot)
 
 	assertContainsFile(t, filepath.Join(repoRoot, "registry-cell", "pulp.cell.toml"),
-		`provides = ["bananagine.registry.v1"]`)
+		`"bananagine.registry.v1.register"`,
+		`"bananagine.registry.v1.remove_match"`)
 	assertContainsFile(t, filepath.Join(repoRoot, "composition", "lua-orchestrator.pulp.cell.toml"),
-		`consumes = ["bananagine.registry.v1"]`,
+		`"orchestrator.dispatch"`,
+		`"bananagine.registry.v1.register"`,
+		`"bananagine.registry.v1.remove_match"`,
 		`depends_on = ["bananagine-registry"]`)
 	assertContainsFile(t, filepath.Join(repoRoot, "pulp-cell", "pulp.cell.toml"),
-		`consumes = ["bananagine.app"]`,
+		`consumes = ["orchestrator.dispatch"]`,
 		`depends_on = ["bananagine-lua"]`)
 
 	scriptPath := filepath.Join(repoRoot, "composition", "bananagine.lua")

@@ -2,7 +2,7 @@ name = "bananagine"
 version = "0.6.0"
 wasm = "bananagine.wasm"
 
-consumes = ["bananagine.app"]
+consumes = ["orchestrator.dispatch"]
 depends_on = ["bananagine-lua"]
 
 capabilities = [
