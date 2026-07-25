@@ -1,0 +1,12 @@
+name = "bananagine-registry"
+version = "0.1.0"
+wasm = "bananagine-registry.wasm"
+
+provides = ["bananagine.registry.v1"]
+consumes = []
+depends_on = []
+
+# Registry state is currently intentionally in-memory, matching the legacy
+# Bananagine registry. A later wave can add snapshots or lease reconstruction
+# without changing this public capability.
+capabilities = []

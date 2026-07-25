@@ -1,13 +1,11 @@
-module bananagine-cell
+module bananagine-registry-cell
 
 go 1.25.6
 
 require (
 	github.com/BananaLabs-OSS/Fiber v0.0.0
-	github.com/MonkeyLabs-LLC/Marrow v0.1.1
 	github.com/bananalabs-oss/bananagine v0.0.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -16,7 +14,5 @@ require (
 )
 
 replace github.com/BananaLabs-OSS/Fiber => ../../Fiber
-
-replace github.com/MonkeyLabs-LLC/Marrow => ../../Marrow
 
 replace github.com/bananalabs-oss/bananagine => ..

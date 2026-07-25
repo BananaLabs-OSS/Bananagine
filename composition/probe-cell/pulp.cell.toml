@@ -1,0 +1,8 @@
+name = "bananagine-composition-probe"
+version = "0.1.0"
+wasm = "bananagine-composition-probe.wasm"
+
+provides = []
+consumes = ["bananagine.app"]
+depends_on = ["bananagine-lua"]
+capabilities = ["transport.http.inbound"]

@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/MonkeyLabs-LLC/Marrow/capacity"
+)
 
 // capacityTracker is NOT protected by a mutex.
 //
@@ -28,10 +32,14 @@ func newCapacityTracker(cpuBudget, memBudget float64) *capacityTracker {
 
 func (ct *capacityTracker) tryAllocate(containerID string, cpuLimit float64, memLimitBytes int64) error {
 	memGiB := float64(memLimitBytes) / (1024 * 1024 * 1024)
-	if ct.cpuBudget > 0 && ct.allocCPU+cpuLimit > ct.cpuBudget {
-		return fmt.Errorf("CPU capacity exceeded (%.2f + %.2f > %.2f)", ct.allocCPU, cpuLimit, ct.cpuBudget)
-	}
-	if ct.memBudget > 0 && ct.allocMem+memGiB > ct.memBudget {
+	if !capacity.CanFit(
+		capacity.Resources{CPU: ct.allocCPU, MemoryGiB: ct.allocMem},
+		capacity.Resources{CPU: cpuLimit, MemoryGiB: memGiB},
+		capacity.Resources{CPU: ct.cpuBudget, MemoryGiB: ct.memBudget},
+	) {
+		if ct.cpuBudget > 0 && ct.allocCPU+cpuLimit > ct.cpuBudget {
+			return fmt.Errorf("CPU capacity exceeded (%.2f + %.2f > %.2f)", ct.allocCPU, cpuLimit, ct.cpuBudget)
+		}
 		return fmt.Errorf("memory capacity exceeded (%.2f + %.2f > %.2f GiB)", ct.allocMem, memGiB, ct.memBudget)
 	}
 	ct.allocCPU += cpuLimit

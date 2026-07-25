@@ -1,0 +1,11 @@
+name = "bananagine-lua"
+version = "0.1.0"
+wasm = "../../Pulp-Lua/pulp-cell/lua-orchestrator.wasm"
+
+provides = ["bananagine.app"]
+consumes = ["bananagine.registry.v1"]
+depends_on = ["bananagine-registry"]
+capabilities = []
+
+[config]
+timeout_ms = 5000

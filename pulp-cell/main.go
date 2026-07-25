@@ -23,17 +23,48 @@ import (
 	"time"
 
 	"github.com/BananaLabs-OSS/Fiber/pulp"
+	"github.com/BananaLabs-OSS/Fiber/pulp/cellconfig"
 	"github.com/BananaLabs-OSS/Fiber/pulp/docker"
 	pulpgin "github.com/BananaLabs-OSS/Fiber/pulp/gin"
 	"github.com/BananaLabs-OSS/Fiber/pulp/gin/middleware"
+	"github.com/bananalabs-oss/bananagine/orchestration"
+	bananaregistry "github.com/bananalabs-oss/bananagine/registry"
 
 	"bananagine-cell/execallow"
+	"bananagine-cell/registryproxy"
 	"bananagine-cell/resources"
 )
 
 // orchestrationEventsPath is the SSE route for container lifecycle events.
 // Registered in bootstrap and emitted from the step loop.
 const orchestrationEventsPath = "/orchestration/events"
+
+const registryLuaTarget = "bananagine-lua"
+
+type pulpRegistryCaller struct{}
+
+func (pulpRegistryCaller) Call(target, function string, payload []byte) ([]byte, error) {
+	return pulp.Call(target, function, payload)
+}
+
+var registryComposition = registryproxy.Client{
+	Caller: pulpRegistryCaller{},
+	Target: registryLuaTarget,
+}
+
+func callRegistry[T any](operation string, payload any) (bananaregistry.Result[T], error) {
+	return registryproxy.Dispatch[T](registryComposition, operation, payload)
+}
+
+func writeRegistryFailure(c *pulpgin.Context, operation string, serviceErr *bananaregistry.ServiceError) {
+	status, message := registryproxy.LegacyHTTPFailure(operation, serviceErr)
+	c.JSON(status, pulpgin.H{"error": message})
+}
+
+func writeRegistryUnavailable(c *pulpgin.Context, err error) {
+	log.Printf("[Registry] composition unavailable: %v", err)
+	c.JSON(503, pulpgin.H{"error": registryproxy.UnavailableMessage})
+}
 
 // wireEvent is the JSON shape emitted over SSE and returned by the
 // polling /orchestration/events endpoint. Matches potassium's
@@ -43,20 +74,57 @@ const orchestrationEventsPath = "/orchestration/events"
 // side uses msgpack tags only and no json tags, so encoding it
 // directly would yield capital-letter Go field names and a "timestamp"
 // key where native emitted "time" — that would break Evolution.
-type wireEvent struct {
-	ContainerID string `json:"container_id"`
-	Name        string `json:"name"`
-	Action      string `json:"action"`
-	Time        int64  `json:"time"`
-}
+type wireEvent = orchestration.Event
 
 func toWireEvent(de docker.Event) wireEvent {
-	return wireEvent{
+	return orchestration.Event{
 		ContainerID: de.ContainerID,
 		Name:        de.Name,
 		Action:      de.Action,
 		Time:        de.Timestamp,
 	}
+}
+
+func toOrchestrationServer(server docker.Server) orchestration.Server {
+	return orchestration.Server{
+		ID:          server.ID,
+		Name:        server.Name,
+		Status:      server.Status,
+		IP:          server.IP,
+		Ports:       server.Ports,
+		CPULimit:    server.CPULimit,
+		MemoryLimit: server.MemoryLimit,
+	}
+}
+
+func toOrchestrationServers(servers []docker.Server) []orchestration.Server {
+	result := make([]orchestration.Server, 0, len(servers))
+	for _, server := range servers {
+		result = append(result, toOrchestrationServer(server))
+	}
+	return result
+}
+
+func toOrchestrationStats(stats []docker.ContainerStats) []orchestration.ContainerStats {
+	if stats == nil {
+		return nil
+	}
+	result := make([]orchestration.ContainerStats, 0, len(stats))
+	for _, item := range stats {
+		result = append(result, orchestration.ContainerStats{
+			ContainerID:    item.ContainerID,
+			Name:           item.Name,
+			CPUPercent:     item.CPUPercent,
+			MemoryUsed:     item.MemoryUsed,
+			MemoryLimit:    item.MemoryLimit,
+			NetRxBytes:     item.NetRxBytes,
+			NetTxBytes:     item.NetTxBytes,
+			DiskReadBytes:  item.DiskReadBytes,
+			DiskWriteBytes: item.DiskWriteBytes,
+			Timestamp:      item.Timestamp,
+		})
+	}
+	return result
 }
 
 func main() {}
@@ -88,10 +156,10 @@ type appConfig struct {
 	// OS is opaque from WASM, so the operator fills these in via the
 	// manifest. Zeros are tolerated and reported as 0 with a log-once
 	// warning at startup.
-	NodeCPUCores   int
-	NodeTotalMem   uint64 // bytes
-	NodeDiskTotal  uint64 // bytes
-	NodeDiskUsed   uint64 // bytes
+	NodeCPUCores  int
+	NodeTotalMem  uint64 // bytes
+	NodeDiskTotal uint64 // bytes
+	NodeDiskUsed  uint64 // bytes
 }
 
 func parseConfig(data []byte) (appConfig, error) {
@@ -99,29 +167,24 @@ func parseConfig(data []byte) (appConfig, error) {
 	if len(data) == 0 {
 		return cfg, fmt.Errorf("missing [config]")
 	}
-	var raw map[string]any
-	if err := decodeMsgpack(data, &raw); err != nil {
-		return cfg, err
-	}
-	jbytes, _ := json.Marshal(raw)
 	var tmp struct {
-		Templates    string  `json:"templates"`
-		IPStart      string  `json:"ip_pool_start"`
-		IPEnd        string  `json:"ip_pool_end"`
-		PortStart    int     `json:"port_pool_start"`
-		PortEnd      int     `json:"port_pool_end"`
-		ExternalHost string  `json:"external_host"`
-		ServiceToken string  `json:"service_token"`
-		CPUBudget    float64 `json:"cpu_budget"`
-		MemBudget    float64 `json:"memory_budget"`
-		WorldsDir    string  `json:"worlds_dir"`
-		TemplatesDir string  `json:"templates_dir"`
-		NodeCPUCores  int    `json:"node_cpu_cores"`
-		NodeTotalMem  uint64 `json:"node_total_memory"`
-		NodeDiskTotal uint64 `json:"node_disk_total"`
-		NodeDiskUsed  uint64 `json:"node_disk_used"`
+		Templates     string  `json:"templates"`
+		IPStart       string  `json:"ip_pool_start"`
+		IPEnd         string  `json:"ip_pool_end"`
+		PortStart     int     `json:"port_pool_start"`
+		PortEnd       int     `json:"port_pool_end"`
+		ExternalHost  string  `json:"external_host"`
+		ServiceToken  string  `json:"service_token"`
+		CPUBudget     float64 `json:"cpu_budget"`
+		MemBudget     float64 `json:"memory_budget"`
+		WorldsDir     string  `json:"worlds_dir"`
+		TemplatesDir  string  `json:"templates_dir"`
+		NodeCPUCores  int     `json:"node_cpu_cores"`
+		NodeTotalMem  uint64  `json:"node_total_memory"`
+		NodeDiskTotal uint64  `json:"node_disk_total"`
+		NodeDiskUsed  uint64  `json:"node_disk_used"`
 	}
-	if err := json.Unmarshal(jbytes, &tmp); err != nil {
+	if err := cellconfig.Decode(data, &tmp); err != nil {
 		return cfg, fmt.Errorf("decode config: %w", err)
 	}
 	if tmp.Templates != "" {
@@ -173,25 +236,9 @@ func parseConfig(data []byte) (appConfig, error) {
 	return cfg, nil
 }
 
-type createServerRequest struct {
-	Template  string            `json:"template"`
-	ServerID  string            `json:"server_id,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	// Resources overrides the per-template YAML defaults. Precedence is:
-	//   YAML default → MemoryLimit/CPULimit (legacy, byte/cores) →
-	//   MaxRamMb/MaxCpuCores (new, MB/cores) → caller-supplied Env["MEMORY"]
-	// New fields take precedence over legacy. JvmHeapMb defaults to
-	// MaxRamMb - 1536 (reserved for entrypoint + OS overhead) when zero.
-	Resources struct {
-		// Legacy fields — bytes for memory, fractional cores for CPU.
-		MemoryLimit int64   `json:"memory_limit,omitempty"`
-		CPULimit    float64 `json:"cpu_limit,omitempty"`
-		// New tier-driven fields.
-		MaxCpuCores float64 `json:"max_cpu_cores,omitempty"`
-		MaxRamMb    int64   `json:"max_ram_mb,omitempty"`
-		JvmHeapMb   int64   `json:"jvm_heap_mb,omitempty"`
-	} `json:"resources,omitempty"`
-}
+// Keep the handler's local name while provider and callers compile against
+// the same Bananagine-owned public contract.
+type createServerRequest = orchestration.CreateServerRequest
 
 // Exec authorization, whole-string allowlist.
 //
@@ -218,17 +265,18 @@ type createServerRequest struct {
 //   - Every user-influenced value (motd, seed, world name, gamerule value,
 //     ops/ban JSON, URLs, datapack filenames) is confined to a span that a
 //     malicious value cannot break out of:
-//       * Single-quoted spans (URLs, base64, datapack paths) use sqArg, which
-//         only admits non-quote bytes plus the POSIX `'\''` splice — the
-//         caller escapes embedded quotes, so the span cannot close its quoting.
-//       * BARE sed property values use propVal: the only character that could
-//         escape the surrounding `sed -i '…'` single-quote wrapper is a raw
-//         single quote, so propVal forbids `'` (and a literal newline). The
-//         caller's sanitizeProperty already strips `' " ; $ ` \ | &` and
-//         newlines, so propVal is a superset-safe gate that ALSO admits `/`
-//         (the MEDIUM motd-slash fix) without permitting a quote breakout.
-//       * gamerule rule/value tokens are constrained to identifier/boolean/
-//         integer classes (no metacharacters reach the shell from them).
+//   - Single-quoted spans (URLs, base64, datapack paths) use sqArg, which
+//     only admits non-quote bytes plus the POSIX `'\”` splice — the
+//     caller escapes embedded quotes, so the span cannot close its quoting.
+//   - BARE sed property values use propVal: the only character that could
+//     escape the surrounding `sed -i '…'` single-quote wrapper is a raw
+//     single quote, so propVal forbids `'` (and a literal newline). The
+//     caller's sanitizeProperty already strips `' " ; $ ` \ | &` and
+//     newlines, so propVal is a superset-safe gate that ALSO admits `/`
+//     (the MEDIUM motd-slash fix) without permitting a quote breakout.
+//   - gamerule rule/value tokens are constrained to identifier/boolean/
+//     integer classes (no metacharacters reach the shell from them).
+//
 // execCommandAllowed is the authorization gate for the in-container exec
 // handler. The pure-regex allowlist kernel lives in the host-buildable
 // `execallow` subpackage (parent package main is wasip1/wasm-only because of
@@ -296,7 +344,6 @@ func bootstrap(configBytes []byte) error {
 	ipp := newIPPool(cfg.IPStart, cfg.IPEnd)
 	fallback := newPortPool(cfg.PortStart, cfg.PortEnd)
 	portPools := newPortPoolSet(fallback)
-	reg := newRegistry()
 
 	for _, tmpl := range templates {
 		for _, p := range tmpl.Container.Ports {
@@ -355,17 +402,9 @@ func bootstrap(configBytes []byte) error {
 	})
 
 	r.GET("/templates", func(c *pulpgin.Context) {
-		type info struct {
-			Name        string  `json:"name"`
-			Game        string  `json:"game"`
-			Label       string  `json:"label"`
-			Engine      string  `json:"engine,omitempty"`
-			CPULimit    float64 `json:"cpu_limit"`
-			MemoryLimit int64   `json:"memory_limit"`
-		}
-		result := make([]info, 0, len(templates))
+		result := make([]orchestration.TemplateInfo, 0, len(templates))
 		for _, t := range templates {
-			result = append(result, info{
+			result = append(result, orchestration.TemplateInfo{
 				Name:        t.Name,
 				Game:        t.Game,
 				Label:       t.Label,
@@ -410,10 +449,7 @@ func bootstrap(configBytes []byte) error {
 		// Upstream cmd/server initializes `servers := []orchestrator.Server{}`
 		// so an empty list marshals as `[]`, not `null`. docker.List returns
 		// nil on empty, so coerce before encoding to preserve the wire shape.
-		if servers == nil {
-			servers = []docker.Server{}
-		}
-		c.JSON(200, servers)
+		c.JSON(200, toOrchestrationServers(servers))
 	})
 
 	orch.GET("/servers/:id", func(c *pulpgin.Context) {
@@ -431,7 +467,7 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(500, pulpgin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, server)
+		c.JSON(200, toOrchestrationServer(*server))
 	})
 
 	orch.POST("/servers", func(c *pulpgin.Context) {
@@ -623,12 +659,16 @@ func bootstrap(configBytes []byte) error {
 			MemorySwap:  container.MemorySwap,
 			Environment: container.Environment,
 		}
+		var override orchestration.ResourceOverride
+		if req.Resources != nil {
+			override = *req.Resources
+		}
 		resources.Apply(&rc, resources.Override{
-			MemoryLimit: req.Resources.MemoryLimit,
-			CPULimit:    req.Resources.CPULimit,
-			MaxCpuCores: req.Resources.MaxCpuCores,
-			MaxRamMb:    req.Resources.MaxRamMb,
-			JvmHeapMb:   req.Resources.JvmHeapMb,
+			MemoryLimit: override.MemoryLimit,
+			CPULimit:    override.CPULimit,
+			MaxCpuCores: override.MaxCpuCores,
+			MaxRamMb:    override.MaxRamMb,
+			JvmHeapMb:   override.JvmHeapMb,
 		}, req.Env)
 		container.MemoryLimit = rc.MemoryLimit
 		container.CPULimit = rc.CPULimit
@@ -684,7 +724,7 @@ func bootstrap(configBytes []byte) error {
 			server.IP = cfg.ExternalHost
 		}
 
-		c.JSON(201, server)
+		c.JSON(201, toOrchestrationServer(*server))
 	})
 
 	orch.DELETE("/servers/:id", func(c *pulpgin.Context) {
@@ -738,9 +778,7 @@ func bootstrap(configBytes []byte) error {
 
 	orch.POST("/servers/:id/exec", func(c *pulpgin.Context) {
 		id := c.Param("id")
-		var req struct {
-			Cmd []string `json:"cmd"`
-		}
+		var req orchestration.ExecRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
@@ -762,7 +800,7 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(500, pulpgin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, pulpgin.H{"output": output})
+		c.JSON(200, orchestration.ExecResponse{Output: output})
 	})
 
 	orch.GET("/servers/:id/logs", func(c *pulpgin.Context) {
@@ -785,7 +823,7 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(500, pulpgin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, pulpgin.H{"logs": logs})
+		c.JSON(200, orchestration.LogsResponse{Logs: logs})
 	})
 
 	orch.GET("/servers/:id/stats", func(c *pulpgin.Context) {
@@ -809,17 +847,17 @@ func bootstrap(configBytes []byte) error {
 			return
 		}
 		allocCPU, allocMem, _ := capacity.snapshot()
-		c.JSON(200, pulpgin.H{
-			"containers": containers,
-			"node": pulpgin.H{
-				"cpu_cores":        cfg.NodeCPUCores,
-				"total_memory":     cfg.NodeTotalMem,
-				"allocated_cpu":    allocCPU,
-				"allocated_memory": allocMem,
-				"disk_total":       cfg.NodeDiskTotal,
-				"disk_used":        cfg.NodeDiskUsed,
-				"cpu_budget":       cfg.CPUBudget,
-				"memory_budget":    cfg.MemBudget,
+		c.JSON(200, orchestration.StatsResponse{
+			Containers: toOrchestrationStats(containers),
+			Node: orchestration.NodeStats{
+				CPUCores:        cfg.NodeCPUCores,
+				TotalMemory:     cfg.NodeTotalMem,
+				AllocatedCPU:    allocCPU,
+				AllocatedMemory: allocMem,
+				DiskTotal:       cfg.NodeDiskTotal,
+				DiskUsed:        cfg.NodeDiskUsed,
+				CPUBudget:       cfg.CPUBudget,
+				MemoryBudget:    cfg.MemBudget,
 			},
 		})
 	})
@@ -951,78 +989,96 @@ func bootstrap(configBytes []byte) error {
 	regGroup := r.Group("/registry", auth)
 
 	regGroup.POST("/servers", func(c *pulpgin.Context) {
-		var s serverInfo
-		if err := c.ShouldBindJSON(&s); err != nil {
+		var server bananaregistry.Server
+		if err := c.ShouldBindJSON(&server); err != nil {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		if err := reg.register(s); err != nil {
-			c.JSON(400, pulpgin.H{"error": err.Error()})
+		result, err := callRegistry[bananaregistry.Server](bananaregistry.FnRegister, server)
+		if err != nil {
+			writeRegistryUnavailable(c, err)
 			return
 		}
-		c.JSON(201, s)
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnRegister, result.Error)
+			return
+		}
+		// Legacy POST returned the request value, not the stored value. For
+		// game servers this preserves matches:null on registration even though
+		// the registry initializes its stored match map to empty.
+		c.JSON(201, server)
 	})
 
 	regGroup.GET("/servers", func(c *pulpgin.Context) {
-		f := &listFilter{}
-		if t := c.Query("type"); t != "" {
-			f.Type = serverType(t)
+		filter := bananaregistry.ListRequest{
+			Type:          bananaregistry.ServerType(c.Query("type")),
+			Mode:          c.Query("mode"),
+			HasCapacity:   c.Query("hasCapacity") == "true",
+			HasReadyMatch: c.Query("hasReadyMatch") == "true",
 		}
-		if m := c.Query("mode"); m != "" {
-			f.Mode = m
+		result, err := callRegistry[[]bananaregistry.Server](bananaregistry.FnList, filter)
+		if err != nil {
+			writeRegistryUnavailable(c, err)
+			return
 		}
-		if c.Query("hasCapacity") == "true" {
-			f.HasCapacity = true
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnList, result.Error)
+			return
 		}
-		if c.Query("hasReadyMatch") == "true" {
-			f.HasReadyMatch = true
-		}
-		c.JSON(200, reg.list(f))
+		c.JSON(200, result.Value)
 	})
 
 	regGroup.GET("/servers/:id", func(c *pulpgin.Context) {
 		id := c.Param("id")
-		s, ok := reg.get(id)
-		if !ok {
-			c.JSON(404, pulpgin.H{"error": "server not found"})
+		result, err := callRegistry[bananaregistry.Server](
+			bananaregistry.FnGet,
+			bananaregistry.GetRequest{ID: id},
+		)
+		if err != nil {
+			writeRegistryUnavailable(c, err)
 			return
 		}
-		c.JSON(200, s)
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnGet, result.Error)
+			return
+		}
+		c.JSON(200, result.Value)
 	})
 
 	regGroup.PUT("/servers/:id", func(c *pulpgin.Context) {
 		id := c.Param("id")
-		var updates struct {
-			Players    *int              `json:"players"`
-			MaxPlayers *int              `json:"maxPlayers"`
-			Metadata   map[string]string `json:"metadata"`
-		}
+		var updates bananaregistry.UpdateRequest
 		if err := c.ShouldBindJSON(&updates); err != nil {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		err := reg.update(id, func(s *serverInfo) {
-			if updates.Players != nil {
-				s.Players = *updates.Players
-			}
-			if updates.MaxPlayers != nil {
-				s.MaxPlayers = *updates.MaxPlayers
-			}
-			if updates.Metadata != nil {
-				s.Metadata = updates.Metadata
-			}
-		})
+		updates.ID = id
+		result, err := callRegistry[bananaregistry.Server](bananaregistry.FnUpdate, updates)
 		if err != nil {
-			c.JSON(404, pulpgin.H{"error": err.Error()})
+			writeRegistryUnavailable(c, err)
 			return
 		}
-		s, _ := reg.get(id)
-		c.JSON(200, s)
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnUpdate, result.Error)
+			return
+		}
+		c.JSON(200, result.Value)
 	})
 
 	regGroup.DELETE("/servers/:id", func(c *pulpgin.Context) {
 		id := c.Param("id")
-		reg.unregister(id)
+		result, err := callRegistry[bananaregistry.Ack](
+			bananaregistry.FnUnregister,
+			bananaregistry.UnregisterRequest{ID: id},
+		)
+		if err != nil {
+			writeRegistryUnavailable(c, err)
+			return
+		}
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnUnregister, result.Error)
+			return
+		}
 		c.Status(204)
 	})
 
@@ -1035,11 +1091,16 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		err := reg.update(id, func(s *serverInfo) {
-			s.Players = req.Players
-		})
+		result, err := callRegistry[bananaregistry.Server](
+			bananaregistry.FnSetPlayers,
+			bananaregistry.SetPlayersRequest{ID: id, Players: req.Players},
+		)
 		if err != nil {
-			c.JSON(404, pulpgin.H{"error": err.Error()})
+			writeRegistryUnavailable(c, err)
+			return
+		}
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnSetPlayers, result.Error)
 			return
 		}
 		c.JSON(200, pulpgin.H{"status": "ok"})
@@ -1048,23 +1109,39 @@ func bootstrap(configBytes []byte) error {
 	regGroup.PUT("/servers/:id/matches/:matchId", func(c *pulpgin.Context) {
 		serverID := c.Param("id")
 		matchID := c.Param("matchId")
-		var m matchInfo
-		if err := c.ShouldBindJSON(&m); err != nil {
+		var match bananaregistry.Match
+		if err := c.ShouldBindJSON(&match); err != nil {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		if err := reg.updateMatch(serverID, matchID, m); err != nil {
-			c.JSON(404, pulpgin.H{"error": err.Error()})
+		result, err := callRegistry[bananaregistry.Match](
+			bananaregistry.FnPutMatch,
+			bananaregistry.PutMatchRequest{ServerID: serverID, MatchID: matchID, Match: match},
+		)
+		if err != nil {
+			writeRegistryUnavailable(c, err)
 			return
 		}
-		c.JSON(200, m)
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnPutMatch, result.Error)
+			return
+		}
+		c.JSON(200, match)
 	})
 
 	regGroup.DELETE("/servers/:id/matches/:matchId", func(c *pulpgin.Context) {
 		serverID := c.Param("id")
 		matchID := c.Param("matchId")
-		if err := reg.removeMatch(serverID, matchID); err != nil {
-			c.JSON(404, pulpgin.H{"error": err.Error()})
+		result, err := callRegistry[bananaregistry.Ack](
+			bananaregistry.FnRemoveMatch,
+			bananaregistry.RemoveMatchRequest{ServerID: serverID, MatchID: matchID},
+		)
+		if err != nil {
+			writeRegistryUnavailable(c, err)
+			return
+		}
+		if !result.OK {
+			writeRegistryFailure(c, bananaregistry.FnRemoveMatch, result.Error)
 			return
 		}
 		c.Status(204)
