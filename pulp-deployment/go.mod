@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/BananaLabs-OSS/Fiber v0.0.0 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/Microsoft/go-winio v0.4.21 // indirect
 	github.com/bananalabs-oss/potassium v0.9.3 // indirect
@@ -42,6 +43,7 @@ require (
 )
 
 replace (
+	github.com/BananaLabs-OSS/Fiber => ../../Fiber
 	github.com/BananaLabs-OSS/Pulp => ../../Pulp
 	github.com/BananaLabs-OSS/Pulp-ext-docker => ../../Pulp-ext-docker
 	github.com/BananaLabs-OSS/Pulp-ext-fs => ../../Pulp-ext-fs
