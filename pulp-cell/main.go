@@ -477,6 +477,23 @@ func bootstrap(configBytes []byte) error {
 			return
 		}
 
+		// Evolution retries provision requests with the same ServerID. Resolve
+		// that exact Docker name before looking up templates, allocating a port
+		// or IP, calling hooks, or consuming capacity. A retry therefore has the
+		// same successful create shape but never replays provisioning side effects.
+		if req.ServerID != "" {
+			existing, found, err := existingServerForRequestedID(req.ServerID, docker.Get)
+			if err != nil {
+				c.JSON(500, pulpgin.H{"error": err.Error()})
+				return
+			}
+			if found {
+				server := orchestrationResponseServer(*existing, req.ServerID, cfg.ExternalHost)
+				c.JSON(201, toOrchestrationServer(server))
+				return
+			}
+		}
+
 		tmpl, ok := templates[req.Template]
 		if !ok {
 			c.JSON(404, pulpgin.H{"error": "template not found"})
@@ -684,11 +701,23 @@ func bootstrap(configBytes []byte) error {
 		fmt.Println("Final environment:", container.Environment)
 
 		container.Name = serverID
-		server, err := docker.Create(containerToCreateRequest(container))
+		server, existing, err := createWithSpeculativeResources(
+			serverID,
+			containerToCreateRequest(container),
+			docker.Get,
+			docker.Create,
+			func() {
+				capacity.release(serverID)
+				releaseResources()
+			},
+		)
 		if err != nil {
-			capacity.release(serverID)
-			releaseResources()
 			c.JSON(500, pulpgin.H{"error": err.Error()})
+			return
+		}
+		if existing {
+			server := orchestrationResponseServer(*server, serverID, cfg.ExternalHost)
+			c.JSON(201, toOrchestrationServer(server))
 			return
 		}
 
@@ -720,11 +749,8 @@ func bootstrap(configBytes []byte) error {
 			}
 		}
 
-		if cfg.ExternalHost != "" {
-			server.IP = cfg.ExternalHost
-		}
-
-		c.JSON(201, toOrchestrationServer(*server))
+		responseServer := orchestrationResponseServer(*server, serverID, cfg.ExternalHost)
+		c.JSON(201, toOrchestrationServer(responseServer))
 	})
 
 	orch.DELETE("/servers/:id", func(c *pulpgin.Context) {
