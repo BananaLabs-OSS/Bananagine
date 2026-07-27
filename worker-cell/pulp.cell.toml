@@ -1,0 +1,14 @@
+name = "bananagine-worker"
+version = "0.1.0"
+wasm = "bananagine-worker.wasm"
+
+provides = [
+  "bananagine.worker.v1.http.submit",
+  "bananagine.worker.v1.status",
+  "bananagine.worker.v1.cancel",
+  "bananagine.worker.v1.snapshot.export",
+  "bananagine.worker.v1.snapshot.import",
+]
+consumes = []
+depends_on = []
+capabilities = ["workers"]

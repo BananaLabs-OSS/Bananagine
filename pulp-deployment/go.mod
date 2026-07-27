@@ -7,6 +7,7 @@ require (
 	github.com/BananaLabs-OSS/Pulp-ext-docker v0.0.0
 	github.com/BananaLabs-OSS/Pulp-ext-fs v0.0.0
 	github.com/BananaLabs-OSS/Pulp-ext-http v0.0.0
+	github.com/BananaLabs-OSS/Pulp-ext-workers v0.0.0
 )
 
 require (
@@ -48,5 +49,6 @@ replace (
 	github.com/BananaLabs-OSS/Pulp-ext-docker => ../../Pulp-ext-docker
 	github.com/BananaLabs-OSS/Pulp-ext-fs => ../../Pulp-ext-fs
 	github.com/BananaLabs-OSS/Pulp-ext-http => ../../Pulp-ext-http
+	github.com/BananaLabs-OSS/Pulp-ext-workers => ../../Pulp-ext-workers
 	github.com/bananalabs-oss/potassium => ../../Potassium
 )

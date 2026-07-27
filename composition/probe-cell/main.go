@@ -9,7 +9,9 @@ import (
 	"github.com/BananaLabs-OSS/Fiber/pulp"
 	pulpgin "github.com/BananaLabs-OSS/Fiber/pulp/gin"
 	"github.com/BananaLabs-OSS/Fiber/pulp/workflow"
+	"github.com/bananalabs-oss/bananagine/gameworker"
 	"github.com/bananalabs-oss/bananagine/registry"
+	"github.com/bananalabs-oss/bananagine/templatecatalog"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"bananagine-cell/registryproxy"
@@ -60,6 +62,87 @@ func init() {
 
 		router.GET("/composition/health", func(c *pulpgin.Context) {
 			c.JSON(200, pulpgin.H{"status": "ok"})
+		})
+
+		router.POST("/composition/templates/replace", func(c *pulpgin.Context) {
+			var request templatecatalog.ReplaceRequest
+			if err := c.ShouldBindJSON(&request); err != nil {
+				c.JSON(400, pulpgin.H{"error": err.Error()})
+				return
+			}
+			result, err := dispatch[templatecatalog.Catalog](templatecatalog.FnReplace, request)
+			if err != nil {
+				c.JSON(503, pulpgin.H{"error": err.Error()})
+				return
+			}
+			if !result.OK {
+				c.JSON(400, result)
+				return
+			}
+			c.JSON(200, result.Value)
+		})
+
+		router.GET("/composition/templates", func(c *pulpgin.Context) {
+			result, err := dispatch[templatecatalog.Catalog](templatecatalog.FnList, map[string]any{})
+			if err != nil {
+				c.JSON(503, pulpgin.H{"error": err.Error()})
+				return
+			}
+			if !result.OK {
+				c.JSON(500, result)
+				return
+			}
+			c.JSON(200, result.Value)
+		})
+
+		router.GET("/composition/templates/:name/config", func(c *pulpgin.Context) {
+			result, err := dispatch[templatecatalog.Entry](
+				templatecatalog.FnGet,
+				templatecatalog.GetRequest{Name: c.Param("name")},
+			)
+			if err != nil {
+				c.JSON(503, pulpgin.H{"error": err.Error()})
+				return
+			}
+			if !result.OK {
+				c.JSON(404, result)
+				return
+			}
+			c.Data(200, "application/json; charset=utf-8", result.Value.ConfigJSON)
+		})
+
+		router.POST("/composition/worker/submit", func(c *pulpgin.Context) {
+			var request gameworker.SubmitRequest
+			if err := c.ShouldBindJSON(&request); err != nil {
+				c.JSON(400, pulpgin.H{"error": err.Error()})
+				return
+			}
+			result, err := dispatch[gameworker.Job](gameworker.FnSubmit, request)
+			if err != nil {
+				c.JSON(503, pulpgin.H{"error": err.Error()})
+				return
+			}
+			if !result.OK {
+				c.JSON(500, result)
+				return
+			}
+			c.JSON(202, result.Value)
+		})
+
+		router.GET("/composition/worker/:id", func(c *pulpgin.Context) {
+			result, err := dispatch[gameworker.Job](
+				gameworker.FnStatus,
+				gameworker.StatusRequest{IdempotencyKey: c.Param("id")},
+			)
+			if err != nil {
+				c.JSON(503, pulpgin.H{"error": err.Error()})
+				return
+			}
+			if !result.OK {
+				c.JSON(500, result)
+				return
+			}
+			c.JSON(200, result.Value)
 		})
 
 		router.POST("/composition/registry/servers", func(c *pulpgin.Context) {

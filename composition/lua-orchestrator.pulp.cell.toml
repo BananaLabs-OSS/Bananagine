@@ -15,8 +15,22 @@ consumes = [
   "bananagine.registry.v1.set_players",
   "bananagine.registry.v1.put_match",
   "bananagine.registry.v1.remove_match",
+  "bananagine.template-catalog.v1.replace",
+  "bananagine.template-catalog.v1.list",
+  "bananagine.template-catalog.v1.get",
+  "bananagine.template-catalog.v1.snapshot.export",
+  "bananagine.template-catalog.v1.snapshot.import",
+  "bananagine.worker.v1.http.submit",
+  "bananagine.worker.v1.status",
+  "bananagine.worker.v1.cancel",
+  "bananagine.worker.v1.snapshot.export",
+  "bananagine.worker.v1.snapshot.import",
 ]
-depends_on = ["bananagine-registry"]
+depends_on = [
+  "bananagine-registry",
+  "bananagine-template-catalog",
+  "bananagine-worker",
+]
 capabilities = []
 
 [config]

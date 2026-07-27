@@ -40,6 +40,8 @@ func TestExistingServerForRequestedIDReturnsRetryProjection(t *testing.T) {
 
 func TestExistingServerForRequestedIDOnlyProceedsOnNotFound(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
+		restore := replaceGetOwnedServer(t, func(string) (*docker.Server, error) { return nil, pulp.ErrNotFound })
+		defer restore()
 		server, found, err := existingServerForRequestedID("stable", func(string) (*docker.Server, error) {
 			return nil, pulp.ErrNotFound
 		})
@@ -66,6 +68,29 @@ func TestExistingServerForRequestedIDOnlyProceedsOnNotFound(t *testing.T) {
 			t.Fatalf("lookup = (found=%t, err=%v), want exact-name failure", found, err)
 		}
 	})
+}
+
+func TestExistingServerForRequestedIDUsesHostOwnedLookupAfterRawMiss(t *testing.T) {
+	restore := replaceGetOwnedServer(t, func(logicalName string) (*docker.Server, error) {
+		if logicalName != "minecraft-stable-42" {
+			t.Fatalf("logical name = %q", logicalName)
+		}
+		return &docker.Server{ID: "scoped-container-42", Name: "/pulp-bananagine-default-bananagine-primary-minecraft-stable-42"}, nil
+	})
+	defer restore()
+	server, found, err := existingServerForRequestedID("minecraft-stable-42", func(string) (*docker.Server, error) {
+		return nil, pulp.ErrNotFound
+	})
+	if err != nil || !found || server == nil || server.ID != "scoped-container-42" {
+		t.Fatalf("owned lookup = (%#v, %t, %v), want canonical scoped server", server, found, err)
+	}
+}
+
+func replaceGetOwnedServer(t *testing.T, replacement dockerServerGet) func() {
+	t.Helper()
+	previous := getOwnedServer
+	getOwnedServer = replacement
+	return func() { getOwnedServer = previous }
 }
 
 func TestCreateWithSpeculativeResourcesReleasesOnNameConflictRace(t *testing.T) {

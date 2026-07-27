@@ -29,6 +29,7 @@ import (
 	"github.com/BananaLabs-OSS/Fiber/pulp/gin/middleware"
 	"github.com/bananalabs-oss/bananagine/orchestration"
 	bananaregistry "github.com/bananalabs-oss/bananagine/registry"
+	"github.com/bananalabs-oss/bananagine/templatecatalog"
 
 	"bananagine-cell/execallow"
 	"bananagine-cell/registryproxy"
@@ -305,6 +306,9 @@ func bootstrap(configBytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("load templates: %w", err)
 	}
+	if err := synchronizeTemplateCatalog(templates); err != nil {
+		return fmt.Errorf("synchronize template catalog: %w", err)
+	}
 
 	// Startup config log — mirrors cmd/server/main.go so operators grepping
 	// stderr see the same lines across native + cell deployments.
@@ -402,18 +406,28 @@ func bootstrap(configBytes []byte) error {
 	})
 
 	r.GET("/templates", func(c *pulpgin.Context) {
-		result := make([]orchestration.TemplateInfo, 0, len(templates))
-		for _, t := range templates {
-			result = append(result, orchestration.TemplateInfo{
-				Name:        t.Name,
-				Game:        t.Game,
-				Label:       t.Label,
-				Engine:      t.Engine,
-				CPULimit:    t.Container.CPULimit,
-				MemoryLimit: t.Container.MemoryLimit,
+		result, err := callTemplateCatalog[templatecatalog.Catalog](templatecatalog.FnList, map[string]any{})
+		if err != nil {
+			log.Printf("[TemplateCatalog] composition unavailable: %v", err)
+			c.JSON(503, pulpgin.H{"error": "template catalog unavailable"})
+			return
+		}
+		if !result.OK {
+			message := "template catalog failed"
+			if result.Error != nil && result.Error.Message != "" {
+				message = result.Error.Message
+			}
+			c.JSON(500, pulpgin.H{"error": message})
+			return
+		}
+		entries := make([]orchestration.TemplateInfo, 0, len(result.Value.Entries))
+		for _, entry := range result.Value.Entries {
+			entries = append(entries, orchestration.TemplateInfo{
+				Name: entry.Name, Game: entry.Game, Label: entry.Label, Engine: entry.Engine,
+				CPULimit: entry.CPULimit, MemoryLimit: entry.MemoryLimit,
 			})
 		}
-		c.JSON(200, result)
+		c.JSON(200, entries)
 	})
 
 	// NOTE: /reload-templates is a mutating, disk-reading endpoint and is
@@ -423,12 +437,32 @@ func bootstrap(configBytes []byte) error {
 
 	r.GET("/templates/:name/config", func(c *pulpgin.Context) {
 		name := c.Param("name")
-		tmpl, ok := templates[name]
-		if !ok {
+		result, err := callTemplateCatalog[templatecatalog.Entry](
+			templatecatalog.FnGet,
+			templatecatalog.GetRequest{Name: name},
+		)
+		if err != nil {
+			log.Printf("[TemplateCatalog] composition unavailable: %v", err)
+			c.JSON(503, pulpgin.H{"error": "template catalog unavailable"})
+			return
+		}
+		if !result.OK {
+			if result.Error != nil && result.Error.Code == templatecatalog.CodeNotFound {
+				c.JSON(404, pulpgin.H{"error": "template not found"})
+				return
+			}
+			message := "template catalog failed"
+			if result.Error != nil && result.Error.Message != "" {
+				message = result.Error.Message
+			}
+			c.JSON(500, pulpgin.H{"error": message})
+			return
+		}
+		if len(result.Value.ConfigJSON) == 0 {
 			c.JSON(404, pulpgin.H{"error": "template not found"})
 			return
 		}
-		c.JSON(200, tmpl.Config)
+		c.Data(200, "application/json; charset=utf-8", result.Value.ConfigJSON)
 	})
 
 	// --- Orchestration ---
@@ -789,32 +823,19 @@ func bootstrap(configBytes []byte) error {
 		c.Status(204)
 	})
 
-	orch.POST("/servers/:id/restart", func(c *pulpgin.Context) {
-		id := c.Param("id")
-		if err := docker.Restart(id); err != nil {
-			if isDockerNotFound(err) {
-				c.JSON(404, pulpgin.H{"error": "server not found"})
-				return
-			}
-			c.JSON(500, pulpgin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, pulpgin.H{"status": "restarted"})
-	})
+	registerFleetLifecycleRoutes(orch)
+	registerFleetObservationRoutes(orch)
+	registerFleetExecV2Route(orch)
 
 	orch.POST("/servers/:id/exec", func(c *pulpgin.Context) {
 		id := c.Param("id")
-		var req orchestration.ExecRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if !validFleetIdentity(id) {
+			c.JSON(400, pulpgin.H{"error": "invalid container identity"})
+			return
+		}
+		req, err := decodeLegacyExecRequest(c)
+		if err != nil {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
-			return
-		}
-		if len(req.Cmd) == 0 {
-			c.JSON(400, pulpgin.H{"error": "cmd is required"})
-			return
-		}
-		if !execCommandAllowed(req.Cmd) {
-			c.JSON(400, pulpgin.H{"error": "Command not allowed"})
 			return
 		}
 		output, err := docker.Exec(id, req.Cmd)
@@ -1183,6 +1204,11 @@ func bootstrap(configBytes []byte) error {
 		fresh, err := loadTemplates(cfg.TemplateFiles)
 		if err != nil {
 			log.Printf("[Reload] Failed to reload templates: %v", err)
+			c.JSON(500, pulpgin.H{"error": err.Error()})
+			return
+		}
+		if err := synchronizeTemplateCatalog(fresh); err != nil {
+			log.Printf("[Reload] Failed to synchronize template catalog: %v", err)
 			c.JSON(500, pulpgin.H{"error": err.Error()})
 			return
 		}

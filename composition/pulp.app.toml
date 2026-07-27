@@ -3,6 +3,8 @@ name = "bananagine"
 version = "0.6.0"
 cells = [
   "../registry-cell/pulp.cell.toml",
+  "../template-catalog-cell/pulp.cell.toml",
+  "../worker-cell/pulp.cell.toml",
   "lua-orchestrator.pulp.cell.toml",
   "../pulp-cell/pulp.cell.toml",
 ]
@@ -10,4 +12,4 @@ cells = [
 [orchestrator]
 manifest = "lua-orchestrator.pulp.cell.toml"
 script = "bananagine.lua"
-sha256 = "d67c9663c8eeff040627992018709aa953fdcfd1b5107ca32462fc3eb22e0d7a"
+sha256 = "14df34e8daf46d9d01923abd7565ed4d01c399b43033179aa6e594ee51f6500c"

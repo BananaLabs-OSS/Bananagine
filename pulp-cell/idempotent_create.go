@@ -12,19 +12,43 @@ import (
 type dockerServerGet func(string) (*docker.Server, error)
 type dockerServerCreate func(docker.CreateRequest) (*docker.Server, error)
 
+// getOwnedServer resolves a logical Bananagine ServerID through the host's
+// captured application/cell scope. It deliberately lives behind this variable
+// so the pure retry boundary remains testable without a WASM host.
+var getOwnedServer = docker.GetOwned
+
 // existingServerForRequestedID resolves the container created for serverID.
 // Docker returns names with a leading slash, but the orchestration contract
 // uses the unprefixed ServerID as the container name.
 func existingServerForRequestedID(serverID string, get dockerServerGet) (*docker.Server, bool, error) {
 	server, err := get(serverID)
+	resolvedOwned := false
 	if err != nil {
 		if isDockerNotFound(err) {
-			return nil, false, nil
+			// docker.Create may scope the physical container name. Only the host
+			// owns that namespace, so fall back to its logical-name lookup rather
+			// than reconstructing a prefix in guest code.
+			server, err = getOwnedServer(serverID)
+			resolvedOwned = err == nil
+			if err != nil {
+				if isDockerNotFound(err) {
+					return nil, false, nil
+				}
+				return nil, false, err
+			}
+		} else {
+			return nil, false, err
 		}
-		return nil, false, err
 	}
 	if server == nil {
 		return nil, false, fmt.Errorf("docker get %q returned no container", serverID)
+	}
+	// The host's owned-name ABI binds the logical name to its captured scope and
+	// returns a validated canonical identity. Its physical name is intentionally
+	// opaque to guest code, so only an unscoped direct lookup needs this legacy
+	// textual name check.
+	if resolvedOwned {
+		return server, true, nil
 	}
 	if strings.TrimPrefix(server.Name, "/") != serverID {
 		return nil, false, fmt.Errorf("docker get %q resolved container named %q", serverID, server.Name)
