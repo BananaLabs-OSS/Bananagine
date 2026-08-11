@@ -36,6 +36,22 @@ func TestCreateServerRequestJSONContract(t *testing.T) {
 	}
 }
 
+func TestServerRuntimeAttestationJSONContract(t *testing.T) {
+	body, err := json.Marshal(Server{
+		ID: "container-1", Name: "server-1", NodeID: "node-a", WorldName: "server-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire["node_id"] != "node-a" || wire["world_name"] != "server-1" {
+		t.Fatalf("runtime attestation fields changed: %s", body)
+	}
+}
+
 func TestStatsResponseJSONContract(t *testing.T) {
 	body, err := json.Marshal(StatsResponse{
 		Containers: []ContainerStats{},

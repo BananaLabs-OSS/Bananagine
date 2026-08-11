@@ -27,6 +27,31 @@ type CreateServerRequest struct {
 	Resources *ResourceOverride `json:"resources,omitempty" msgpack:"resources,omitempty"`
 }
 
+// RecreateServerRequestV1 creates an approved replacement before retiring a
+// current runtime. Replacement.ServerID must be a new logical runtime ID; the
+// caller supplies a digest of this immutable request so retries cannot quietly
+// alter image/template/resource intent under an existing idempotency key.
+type RecreateServerRequestV1 struct {
+	Version             int                 `json:"version" msgpack:"version"`
+	IdempotencyKey      string              `json:"idempotency_key" msgpack:"idempotency_key"`
+	ReceiptID           string              `json:"receipt_id" msgpack:"receipt_id"`
+	ImmutableSpecSHA256 string              `json:"immutable_spec_sha256" msgpack:"immutable_spec_sha256"`
+	Replacement         CreateServerRequest `json:"replacement" msgpack:"replacement"`
+}
+
+// RecreateServerReceiptV1 is the durable caller-facing acknowledgement of one
+// replacement-first operation. It never claims the old runtime was retired
+// until replacement creation and old retirement have both succeeded.
+type RecreateServerReceiptV1 struct {
+	Version          int    `json:"version" msgpack:"version"`
+	IdempotencyKey   string `json:"idempotency_key" msgpack:"idempotency_key"`
+	ReceiptID        string `json:"receipt_id" msgpack:"receipt_id"`
+	OldContainerID   string `json:"old_container_id" msgpack:"old_container_id"`
+	Replacement      Server `json:"replacement" msgpack:"replacement"`
+	ReplacementReady bool   `json:"replacement_ready" msgpack:"replacement_ready"`
+	OldRetired       bool   `json:"old_retired" msgpack:"old_retired"`
+}
+
 // TemplateInfo is the public template catalog entry returned by Bananagine.
 type TemplateInfo struct {
 	Name        string  `json:"name" msgpack:"name"`
@@ -39,8 +64,14 @@ type TemplateInfo struct {
 
 // Server is Bananagine's public projection of a managed runtime.
 type Server struct {
-	ID          string         `json:"id" msgpack:"id"`
-	Name        string         `json:"name" msgpack:"name"`
+	ID   string `json:"id" msgpack:"id"`
+	Name string `json:"name" msgpack:"name"`
+	// NodeID and WorldName are Bananagine-owned runtime identities.  They are
+	// deliberately emitted by create/adopt rather than reconstructed by a
+	// caller: lifecycle cleanup must be able to attest the exact runtime before
+	// it reaches readiness.
+	NodeID      string         `json:"node_id" msgpack:"node_id"`
+	WorldName   string         `json:"world_name" msgpack:"world_name"`
 	Status      string         `json:"status" msgpack:"status"`
 	IP          string         `json:"ip" msgpack:"ip"`
 	Ports       map[string]int `json:"ports" msgpack:"ports"`
