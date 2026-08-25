@@ -19,3 +19,10 @@ depends_on = []
 # Bananagine registry. A later wave can add snapshots or lease reconstruction
 # without changing this public capability.
 capabilities = []
+
+# Logical owner remains independently addressable. Pulp may place it with the
+# template catalog when a pulp-linear-v1 fused artifact is available.
+[execution]
+mode = "fusible"
+group = "bananagine-state"
+abi = "pulp-linear-v1"

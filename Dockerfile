@@ -15,6 +15,7 @@ RUN mkdir -p \
     /out/application/Bananagine/pulp-cell \
     /out/application/Bananagine/registry-cell \
     /out/application/Bananagine/template-catalog-cell \
+    /out/application/Bananagine/state-cell \
     /out/application/Bananagine/worker-cell \
     /out/application/Pulp-Lua/pulp-cell
 
@@ -22,13 +23,9 @@ WORKDIR /src/Bananagine/pulp-cell
 RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared \
     -o /out/application/Bananagine/pulp-cell/bananagine.wasm .
 
-WORKDIR /src/Bananagine/registry-cell
+WORKDIR /src/Bananagine/state-cell
 RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared \
-    -o /out/application/Bananagine/registry-cell/bananagine-registry.wasm .
-
-WORKDIR /src/Bananagine/template-catalog-cell
-RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared \
-    -o /out/application/Bananagine/template-catalog-cell/bananagine-template-catalog.wasm .
+    -o /out/application/Bananagine/state-cell/bananagine-state.wasm .
 
 WORKDIR /src/Bananagine/worker-cell
 RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared \
@@ -45,6 +42,8 @@ RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared \
 RUN mkdir -p /out/application/Bananagine/composition /out/templates && \
     cp /src/Bananagine/pulp-cell/pulp.cell.toml \
       /out/application/Bananagine/pulp-cell/pulp.cell.toml && \
+    cp /src/Bananagine/state-cell/pulp.cell.toml \
+      /out/application/Bananagine/state-cell/pulp.cell.toml && \
     cp /src/Bananagine/registry-cell/pulp.cell.toml \
       /out/application/Bananagine/registry-cell/pulp.cell.toml && \
     cp /src/Bananagine/template-catalog-cell/pulp.cell.toml \
@@ -58,14 +57,12 @@ RUN mkdir -p /out/application/Bananagine/composition /out/templates && \
     cp /src/paper-server/*.yaml /out/templates/ && \
     for manifest in \
       /out/application/Bananagine/pulp-cell/pulp.cell.toml \
-      /out/application/Bananagine/registry-cell/pulp.cell.toml \
-      /out/application/Bananagine/template-catalog-cell/pulp.cell.toml \
+      /out/application/Bananagine/state-cell/pulp.cell.toml \
       /out/application/Bananagine/worker-cell/pulp.cell.toml \
       /out/application/Bananagine/composition/lua-orchestrator.pulp.cell.toml; do \
       case "$manifest" in \
         */Bananagine/pulp-cell/*) wasm_file=/out/application/Bananagine/pulp-cell/bananagine.wasm ;; \
-        */Bananagine/registry-cell/*) wasm_file=/out/application/Bananagine/registry-cell/bananagine-registry.wasm ;; \
-        */Bananagine/template-catalog-cell/*) wasm_file=/out/application/Bananagine/template-catalog-cell/bananagine-template-catalog.wasm ;; \
+        */Bananagine/state-cell/*) wasm_file=/out/application/Bananagine/state-cell/bananagine-state.wasm ;; \
         */Bananagine/worker-cell/*) wasm_file=/out/application/Bananagine/worker-cell/bananagine-worker.wasm ;; \
         *) wasm_file=/out/application/Pulp-Lua/pulp-cell/lua-orchestrator.wasm ;; \
       esac; \

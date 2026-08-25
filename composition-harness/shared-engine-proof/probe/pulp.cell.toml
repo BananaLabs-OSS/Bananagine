@@ -1,0 +1,8 @@
+name = "bananagine-shared-engine-proof-probe"
+version = "0.1.0"
+wasm = "bananagine-shared-engine-proof-probe.wasm"
+
+provides = []
+consumes = ["orchestrator.dispatch", "bananagine.template-catalog.v1.replace"]
+depends_on = ["bananagine-shared-engine-proof-lua", "bananagine-template-catalog"]
+capabilities = ["transport.http.inbound"]

@@ -27,6 +27,9 @@ service_token = "${SERVICE_TOKEN}"
 cpu_budget = ${CPU_BUDGET}
 memory_budget = ${MEMORY_BUDGET}
 worlds_dir = "/var/sessions/worlds"
+# Canonical identity of this Bananagine runtime. Successful create/adopt
+# responses attest it so product callers do not infer placement.
+runtime_node_id = "node-1"
 # Node hardware descriptors — surface through /orchestration/stats.node.
 # WASM can't read /proc, so the operator fills these in here (bytes for
 # memory/disk, integer core count for CPU). Zeros render as 0 in the

@@ -3,6 +3,8 @@
 -- The registry engine owns state. This Lua file owns the application-level
 -- sequencing and can be reused by HTTP or sibling-call façades.
 
+-- One physical Pulp-native state artifact retains both logical provider
+-- surfaces. The names used below remain unchanged at the capability level.
 local registry_target = "bananagine-registry"
 local template_catalog_target = "bananagine-template-catalog"
 local worker_target = "bananagine-worker"

@@ -33,7 +33,6 @@ import (
 
 	"bananagine-cell/execallow"
 	"bananagine-cell/registryproxy"
-	"bananagine-cell/resources"
 )
 
 // orchestrationEventsPath is the SSE route for container lifecycle events.
@@ -145,6 +144,9 @@ type appConfig struct {
 	CPUBudget     float64
 	MemBudget     float64
 	WorldsDir     string
+	// RuntimeNodeID identifies this Bananagine runtime owner. It is emitted
+	// with successful create/adopt responses so callers never infer placement.
+	RuntimeNodeID string
 
 	// TemplatesDir is the build context passed to docker.Build when the
 	// /admin/build-image endpoint is hit. Mirrors the original service's
@@ -179,6 +181,7 @@ func parseConfig(data []byte) (appConfig, error) {
 		CPUBudget     float64 `json:"cpu_budget"`
 		MemBudget     float64 `json:"memory_budget"`
 		WorldsDir     string  `json:"worlds_dir"`
+		RuntimeNodeID string  `json:"runtime_node_id"`
 		TemplatesDir  string  `json:"templates_dir"`
 		NodeCPUCores  int     `json:"node_cpu_cores"`
 		NodeTotalMem  uint64  `json:"node_total_memory"`
@@ -218,6 +221,13 @@ func parseConfig(data []byte) (appConfig, error) {
 		// inside WASM; we keep it here for manifest/documentation parity
 		// and normalize at use time.
 		cfg.WorldsDir = "/var/sessions/worlds"
+	}
+	cfg.RuntimeNodeID = tmp.RuntimeNodeID
+	if cfg.RuntimeNodeID == "" {
+		// This is Bananagine's local single-runtime identity, retained for
+		// deployments that predate explicit node configuration. Multi-node
+		// deployments must configure runtime_node_id on each runtime.
+		cfg.RuntimeNodeID = "node-1"
 	}
 	cfg.TemplatesDir = tmp.TemplatesDir
 	if cfg.TemplatesDir == "" {
@@ -348,6 +358,12 @@ func bootstrap(configBytes []byte) error {
 	ipp := newIPPool(cfg.IPStart, cfg.IPEnd)
 	fallback := newPortPool(cfg.PortStart, cfg.PortEnd)
 	portPools := newPortPoolSet(fallback)
+	createCore := creationCore{
+		templates: templates, externalHost: cfg.ExternalHost, runtimeNodeID: cfg.RuntimeNodeID,
+		capacity: capacity, ipp: ipp, portPools: portPools,
+		get: docker.Get, create: docker.Create,
+	}
+	recreateCore := newRecreateCore(createCore, docker.Destroy)
 
 	for _, tmpl := range templates {
 		for _, p := range tmpl.Container.Ports {
@@ -510,301 +526,306 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
+		result, err := createCore.Create(req)
+		if err != nil {
+			c.JSON(creationHTTPStatus(err), pulpgin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, result.Server)
+		return
 
-		// Evolution retries provision requests with the same ServerID. Resolve
-		// that exact Docker name before looking up templates, allocating a port
-		// or IP, calling hooks, or consuming capacity. A retry therefore has the
-		// same successful create shape but never replays provisioning side effects.
-		if req.ServerID != "" {
-			existing, found, err := existingServerForRequestedID(req.ServerID, docker.Get)
+		/*
+			Historical inline implementation retained temporarily for source-review
+			diff locality. Normal create now delegates exclusively to creationCore
+			above; the duplicated body is intentionally inactive and will be removed
+			in the following mechanical cleanup.
+		*/
+		/*
+			// Evolution retries provision requests with the same ServerID. Resolve
+			// that exact Docker name before looking up templates, allocating a port
+			// or IP, calling hooks, or consuming capacity. A retry therefore has the
+			// same successful create shape but never replays provisioning side effects.
+			if req.ServerID != "" {
+				existing, found, err := existingServerForRequestedID(req.ServerID, docker.Get)
+				if err != nil {
+					c.JSON(500, pulpgin.H{"error": err.Error()})
+					return
+				}
+				if found {
+					server := orchestrationResponseServer(*existing, req.ServerID, cfg.ExternalHost)
+					c.JSON(201, toOrchestrationServer(server))
+					return
+				}
+			}
+
+			tmpl, ok := templates[req.Template]
+			if !ok {
+				c.JSON(404, pulpgin.H{"error": "template not found"})
+				return
+			}
+
+			container := deepCopyContainer(tmpl.Container)
+
+			// Platform-aware port filtering. A game template can declare ports for
+			// several player platforms (minecraft: java + bedrock), but a server only
+			// exposes the platforms its selected engine supports. Without this, EVERY
+			// minecraft server got a bedrock port even for a Java-only engine with
+			// crossplay off — a dead Geyser port (mc-f7613, 2026-07-20). We keep a
+			// platform-named port (java/bedrock) only when that platform is active for
+			// the chosen engine; crossplay extends a Java engine to also serve Bedrock.
+			if len(tmpl.Config.Engines) > 0 && len(container.Ports) > 0 {
+				active := map[string]bool{}
+				for _, e := range tmpl.Config.Engines {
+					if e.Value == req.Env["ENGINE"] {
+						for _, p := range e.Platforms {
+							active[p] = true
+						}
+						break
+					}
+				}
+				if req.Env["_CROSSPLAY"] == "true" {
+					active["bedrock"] = true
+				}
+				// Only filter once we've resolved the engine's platforms; an unknown or
+				// absent engine keeps every port (safe back-compat for games without a
+				// platform model, and for older callers that don't send ENGINE).
+				if len(active) > 0 {
+					kept := container.Ports[:0]
+					for _, p := range container.Ports {
+						if (p.Name == "java" || p.Name == "bedrock") && !active[p.Name] {
+							continue
+						}
+						kept = append(kept, p)
+					}
+					container.Ports = kept
+				}
+			}
+
+			serverID := req.ServerID
+			if serverID == "" {
+				serverID = fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
+			}
+
+			// Expand volume path templates
+			var volumeExpansions [][2]string
+			for hostPath, containerPath := range container.Volumes {
+				if strings.Contains(hostPath, "{{SERVER_ID}}") {
+					volumeExpansions = append(volumeExpansions, [2]string{hostPath, containerPath})
+				}
+			}
+			for _, exp := range volumeExpansions {
+				delete(container.Volumes, exp[0])
+				container.Volumes[strings.ReplaceAll(exp[0], "{{SERVER_ID}}", serverID)] = exp[1]
+			}
+
+			if container.Environment == nil {
+				container.Environment = make(map[string]string)
+			}
+			for k, v := range tmpl.Server {
+				container.Environment[k] = v
+			}
+
+			var allocatedIP string
+			var allocatedPort int
+
+			if container.Network != "" {
+				ip, err := ipp.allocate(serverID)
+				if err != nil {
+					c.JSON(503, pulpgin.H{"error": err.Error()})
+					return
+				}
+				allocatedIP = ip
+				container.IP = ip
+
+				allocatedPort = 5520
+				if len(container.Ports) > 0 {
+					allocatedPort = container.Ports[0].Container
+				}
+
+				container.Environment["SERVER_HOST"] = ip
+				for _, p := range container.Ports {
+					if p.Name != "" {
+						container.Environment["PORT_"+strings.ToUpper(p.Name)] = fmt.Sprintf("%d", p.Container)
+					}
+				}
+
+				fmt.Printf("Overlay mode: %s -> %s:%d\n", serverID, ip, allocatedPort)
+			} else {
+				var allocatedPorts []int
+				for i := range container.Ports {
+					port, err := portPools.allocate(container.Ports[i].Range, serverID)
+					if err != nil {
+						portPools.releaseByServer(serverID)
+						c.JSON(503, pulpgin.H{"error": err.Error()})
+						return
+					}
+					allocatedPorts = append(allocatedPorts, port)
+					container.Ports[i].Host = port
+					container.Ports[i].Container = port
+				}
+				if len(allocatedPorts) == 0 {
+					port, err := portPools.allocate("", serverID)
+					if err != nil {
+						c.JSON(503, pulpgin.H{"error": err.Error()})
+						return
+					}
+					allocatedPorts = append(allocatedPorts, port)
+				}
+				allocatedPort = allocatedPorts[0]
+
+				container.Environment["SERVER_HOST"] = "0.0.0.0"
+				for i, p := range container.Ports {
+					if p.Name != "" {
+						container.Environment["PORT_"+strings.ToUpper(p.Name)] = fmt.Sprintf("%d", allocatedPorts[i])
+					}
+				}
+
+				fmt.Printf("Host mode: %s -> 0.0.0.0:%d\n", serverID, allocatedPort)
+			}
+
+			container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
+			container.Environment["SERVER_ID"] = serverID
+
+			releaseResources := func() {
+				if allocatedIP != "" {
+					ipp.release(allocatedIP)
+				} else {
+					portPools.releaseByServer(serverID)
+				}
+			}
+
+			// Pre-start hook
+			if tmpl.Hooks.PreStart != "" {
+				fmt.Println("Calling pre_start hook:", tmpl.Hooks.PreStart)
+				resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{
+					Method: "GET",
+					URL:    tmpl.Hooks.PreStart,
+				})
+				if err != nil {
+					fmt.Println("Hook error:", err)
+					releaseResources()
+					c.JSON(500, pulpgin.H{"error": "hook failed: " + err.Error()})
+					return
+				}
+				if resp.Status < 200 || resp.Status >= 300 {
+					fmt.Printf("Hook returned status %d\n", resp.Status)
+					releaseResources()
+					c.JSON(500, pulpgin.H{"error": fmt.Sprintf("hook returned %d", resp.Status)})
+					return
+				}
+				var hookResp struct {
+					Env map[string]string `json:"env"`
+				}
+				if err := json.Unmarshal(resp.Body, &hookResp); err != nil {
+					fmt.Println("Hook response decode error:", err)
+					releaseResources()
+					c.JSON(500, pulpgin.H{"error": "hook response decode failed: " + err.Error()})
+					return
+				}
+				fmt.Println("Hook returned env vars:", hookResp.Env)
+				for k, v := range hookResp.Env {
+					container.Environment[k] = v
+				}
+			} else {
+				fmt.Println("No pre_start hook defined")
+			}
+
+			// Resource overrides + caller env merge — single source of truth
+			// at pulp-cell/resources.Apply (8 unit tests guard precedence:
+			// YAML → legacy MemoryLimit/CPULimit → new MaxRam/MaxCpu → caller
+			// env wins; JVM heap = MaxRamMb - 1536 when JvmHeapMb=0).
+			rc := resources.Container{
+				MemoryLimit: container.MemoryLimit,
+				CPULimit:    container.CPULimit,
+				MemorySwap:  container.MemorySwap,
+				Environment: container.Environment,
+			}
+			var override orchestration.ResourceOverride
+			if req.Resources != nil {
+				override = *req.Resources
+			}
+			resources.Apply(&rc, resources.Override{
+				MemoryLimit: override.MemoryLimit,
+				CPULimit:    override.CPULimit,
+				MaxCpuCores: override.MaxCpuCores,
+				MaxRamMb:    override.MaxRamMb,
+				JvmHeapMb:   override.JvmHeapMb,
+			}, req.Env)
+			container.MemoryLimit = rc.MemoryLimit
+			container.CPULimit = rc.CPULimit
+			container.MemorySwap = rc.MemorySwap
+			container.Environment = rc.Environment
+
+			if err := capacity.tryAllocate(serverID, container.CPULimit, container.MemoryLimit); err != nil {
+				releaseResources()
+				c.JSON(503, pulpgin.H{"error": err.Error()})
+				return
+			}
+
+			fmt.Println("Final environment:", container.Environment)
+
+			container.Name = serverID
+			server, existing, err := createWithSpeculativeResources(
+				serverID,
+				containerToCreateRequest(container),
+				docker.Get,
+				docker.Create,
+				func() {
+					capacity.release(serverID)
+					releaseResources()
+				},
+			)
 			if err != nil {
 				c.JSON(500, pulpgin.H{"error": err.Error()})
 				return
 			}
-			if found {
-				server := orchestrationResponseServer(*existing, req.ServerID, cfg.ExternalHost)
+			if existing {
+				server := orchestrationResponseServer(*server, serverID, cfg.ExternalHost)
 				c.JSON(201, toOrchestrationServer(server))
 				return
 			}
-		}
 
-		tmpl, ok := templates[req.Template]
-		if !ok {
-			c.JSON(404, pulpgin.H{"error": "template not found"})
-			return
-		}
-
-		container := deepCopyContainer(tmpl.Container)
-
-		// Platform-aware port filtering. A game template can declare ports for
-		// several player platforms (minecraft: java + bedrock), but a server only
-		// exposes the platforms its selected engine supports. Without this, EVERY
-		// minecraft server got a bedrock port even for a Java-only engine with
-		// crossplay off — a dead Geyser port (mc-f7613, 2026-07-20). We keep a
-		// platform-named port (java/bedrock) only when that platform is active for
-		// the chosen engine; crossplay extends a Java engine to also serve Bedrock.
-		if len(tmpl.Config.Engines) > 0 && len(container.Ports) > 0 {
-			active := map[string]bool{}
-			for _, e := range tmpl.Config.Engines {
-				if e.Value == req.Env["ENGINE"] {
-					for _, p := range e.Platforms {
-						active[p] = true
-					}
-					break
-				}
-			}
-			if req.Env["_CROSSPLAY"] == "true" {
-				active["bedrock"] = true
-			}
-			// Only filter once we've resolved the engine's platforms; an unknown or
-			// absent engine keeps every port (safe back-compat for games without a
-			// platform model, and for older callers that don't send ENGINE).
-			if len(active) > 0 {
-				kept := container.Ports[:0]
-				for _, p := range container.Ports {
-					if (p.Name == "java" || p.Name == "bedrock") && !active[p.Name] {
-						continue
-					}
-					kept = append(kept, p)
-				}
-				container.Ports = kept
-			}
-		}
-
-		serverID := req.ServerID
-		if serverID == "" {
-			serverID = fmt.Sprintf("%s-%d", req.Template, time.Now().UnixNano())
-		}
-
-		// Expand volume path templates
-		var volumeExpansions [][2]string
-		for hostPath, containerPath := range container.Volumes {
-			if strings.Contains(hostPath, "{{SERVER_ID}}") {
-				volumeExpansions = append(volumeExpansions, [2]string{hostPath, containerPath})
-			}
-		}
-		for _, exp := range volumeExpansions {
-			delete(container.Volumes, exp[0])
-			container.Volumes[strings.ReplaceAll(exp[0], "{{SERVER_ID}}", serverID)] = exp[1]
-		}
-
-		if container.Environment == nil {
-			container.Environment = make(map[string]string)
-		}
-		for k, v := range tmpl.Server {
-			container.Environment[k] = v
-		}
-
-		var allocatedIP string
-		var allocatedPort int
-
-		if container.Network != "" {
-			ip, err := ipp.allocate(serverID)
-			if err != nil {
-				c.JSON(503, pulpgin.H{"error": err.Error()})
-				return
-			}
-			allocatedIP = ip
-			container.IP = ip
-
-			allocatedPort = 5520
-			if len(container.Ports) > 0 {
-				allocatedPort = container.Ports[0].Container
-			}
-
-			container.Environment["SERVER_HOST"] = ip
-			for _, p := range container.Ports {
-				if p.Name != "" {
-					container.Environment["PORT_"+strings.ToUpper(p.Name)] = fmt.Sprintf("%d", p.Container)
-				}
-			}
-
-			fmt.Printf("Overlay mode: %s -> %s:%d\n", serverID, ip, allocatedPort)
-		} else {
-			var allocatedPorts []int
-			for i := range container.Ports {
-				port, err := portPools.allocate(container.Ports[i].Range, serverID)
-				if err != nil {
-					portPools.releaseByServer(serverID)
-					c.JSON(503, pulpgin.H{"error": err.Error()})
-					return
-				}
-				allocatedPorts = append(allocatedPorts, port)
-				container.Ports[i].Host = port
-				container.Ports[i].Container = port
-			}
-			if len(allocatedPorts) == 0 {
-				port, err := portPools.allocate("", serverID)
-				if err != nil {
-					c.JSON(503, pulpgin.H{"error": err.Error()})
-					return
-				}
-				allocatedPorts = append(allocatedPorts, port)
-			}
-			allocatedPort = allocatedPorts[0]
-
-			container.Environment["SERVER_HOST"] = "0.0.0.0"
-			for i, p := range container.Ports {
-				if p.Name != "" {
-					container.Environment["PORT_"+strings.ToUpper(p.Name)] = fmt.Sprintf("%d", allocatedPorts[i])
-				}
-			}
-
-			fmt.Printf("Host mode: %s -> 0.0.0.0:%d\n", serverID, allocatedPort)
-		}
-
-		container.Environment["SERVER_PORT"] = fmt.Sprintf("%d", allocatedPort)
-		container.Environment["SERVER_ID"] = serverID
-
-		releaseResources := func() {
+			capacity.commit(serverID, server.ID)
 			if allocatedIP != "" {
-				ipp.release(allocatedIP)
+				ipp.reKey(serverID, server.ID)
 			} else {
-				portPools.releaseByServer(serverID)
+				portPools.reKey(serverID, server.ID)
 			}
-		}
 
-		// Pre-start hook
-		if tmpl.Hooks.PreStart != "" {
-			fmt.Println("Calling pre_start hook:", tmpl.Hooks.PreStart)
-			resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{
-				Method: "GET",
-				URL:    tmpl.Hooks.PreStart,
-			})
-			if err != nil {
-				fmt.Println("Hook error:", err)
-				releaseResources()
-				c.JSON(500, pulpgin.H{"error": "hook failed: " + err.Error()})
-				return
+			server.Name = serverID
+			if server.Ports == nil {
+				server.Ports = map[string]int{}
 			}
-			if resp.Status < 200 || resp.Status >= 300 {
-				fmt.Printf("Hook returned status %d\n", resp.Status)
-				releaseResources()
-				c.JSON(500, pulpgin.H{"error": fmt.Sprintf("hook returned %d", resp.Status)})
-				return
-			}
-			var hookResp struct {
-				Env map[string]string `json:"env"`
-			}
-			if err := json.Unmarshal(resp.Body, &hookResp); err != nil {
-				fmt.Println("Hook response decode error:", err)
-				releaseResources()
-				c.JSON(500, pulpgin.H{"error": "hook response decode failed: " + err.Error()})
-				return
-			}
-			fmt.Println("Hook returned env vars:", hookResp.Env)
-			for k, v := range hookResp.Env {
-				container.Environment[k] = v
-			}
-		} else {
-			fmt.Println("No pre_start hook defined")
-		}
-
-		// Resource overrides + caller env merge — single source of truth
-		// at pulp-cell/resources.Apply (8 unit tests guard precedence:
-		// YAML → legacy MemoryLimit/CPULimit → new MaxRam/MaxCpu → caller
-		// env wins; JVM heap = MaxRamMb - 1536 when JvmHeapMb=0).
-		rc := resources.Container{
-			MemoryLimit: container.MemoryLimit,
-			CPULimit:    container.CPULimit,
-			MemorySwap:  container.MemorySwap,
-			Environment: container.Environment,
-		}
-		var override orchestration.ResourceOverride
-		if req.Resources != nil {
-			override = *req.Resources
-		}
-		resources.Apply(&rc, resources.Override{
-			MemoryLimit: override.MemoryLimit,
-			CPULimit:    override.CPULimit,
-			MaxCpuCores: override.MaxCpuCores,
-			MaxRamMb:    override.MaxRamMb,
-			JvmHeapMb:   override.JvmHeapMb,
-		}, req.Env)
-		container.MemoryLimit = rc.MemoryLimit
-		container.CPULimit = rc.CPULimit
-		container.MemorySwap = rc.MemorySwap
-		container.Environment = rc.Environment
-
-		if err := capacity.tryAllocate(serverID, container.CPULimit, container.MemoryLimit); err != nil {
-			releaseResources()
-			c.JSON(503, pulpgin.H{"error": err.Error()})
-			return
-		}
-
-		fmt.Println("Final environment:", container.Environment)
-
-		container.Name = serverID
-		server, existing, err := createWithSpeculativeResources(
-			serverID,
-			containerToCreateRequest(container),
-			docker.Get,
-			docker.Create,
-			func() {
-				capacity.release(serverID)
-				releaseResources()
-			},
-		)
-		if err != nil {
-			c.JSON(500, pulpgin.H{"error": err.Error()})
-			return
-		}
-		if existing {
-			server := orchestrationResponseServer(*server, serverID, cfg.ExternalHost)
-			c.JSON(201, toOrchestrationServer(server))
-			return
-		}
-
-		capacity.commit(serverID, server.ID)
-		if allocatedIP != "" {
-			ipp.reKey(serverID, server.ID)
-		} else {
-			portPools.reKey(serverID, server.ID)
-		}
-
-		server.Name = serverID
-		if server.Ports == nil {
-			server.Ports = map[string]int{}
-		}
-		if len(container.Ports) > 0 {
-			for _, p := range container.Ports {
-				portKey := p.Name
-				if portKey == "" {
-					portKey = fmt.Sprintf("%d", p.Container)
+			if len(container.Ports) > 0 {
+				for _, p := range container.Ports {
+					portKey := p.Name
+					if portKey == "" {
+						portKey = fmt.Sprintf("%d", p.Container)
+					}
+					if _, ok := server.Ports[portKey]; !ok {
+						server.Ports[portKey] = p.Host
+					}
 				}
+			} else {
+				portKey := fmt.Sprintf("%d", allocatedPort)
 				if _, ok := server.Ports[portKey]; !ok {
-					server.Ports[portKey] = p.Host
+					server.Ports[portKey] = allocatedPort
 				}
 			}
-		} else {
-			portKey := fmt.Sprintf("%d", allocatedPort)
-			if _, ok := server.Ports[portKey]; !ok {
-				server.Ports[portKey] = allocatedPort
-			}
-		}
 
-		responseServer := orchestrationResponseServer(*server, serverID, cfg.ExternalHost)
-		c.JSON(201, toOrchestrationServer(responseServer))
+			responseServer := orchestrationResponseServer(*server, serverID, cfg.ExternalHost)
+			c.JSON(201, toOrchestrationServer(responseServer))
+		*/
 	})
 
 	orch.DELETE("/servers/:id", func(c *pulpgin.Context) {
 		id := c.Param("id")
-
-		capacity.release(id)
-
-		if c.Query("keep_ports") != "1" {
-			portPools.releaseByServer(id)
-			ipp.releaseByServer(id)
-		} else if newID := c.Query("server_id"); newID != "" {
-			portPools.reKey(id, newID)
-			ipp.reKey(id, newID)
-		}
-
-		if err := docker.Destroy(id); err != nil {
+		if err := retireServer(id, c.Query("keep_ports") == "1", c.Query("server_id"), docker.Destroy, capacity, portPools, ipp); err != nil {
 			// Idempotent destroy: if the container is already gone (or
 			// never existed), surface 204 so callers don't loop. The
-			// resource releases above already ran — those are also
-			// idempotent. Other docker errors still bubble as 500.
+			// retirement operation treats that as success and releases
+			// ownership. Other Docker errors retain ownership and bubble
+			// as 500 because the runtime may still be active.
 			//
 			// The other action endpoints (restart, exec, logs) return
 			// 404 here, but DELETE is semantically "make it gone" — if
@@ -813,14 +834,58 @@ func bootstrap(configBytes []byte) error {
 			// destroy retry loop terminate cleanly without needing the
 			// 5-attempt give-up workaround we shipped on the engine
 			// side.
-			if isDockerNotFound(err) {
-				c.Status(204)
-				return
-			}
 			c.JSON(500, pulpgin.H{"error": err.Error()})
 			return
 		}
 		c.Status(204)
+	})
+
+	// Replacement-first recreate is intentionally a new typed route. The old
+	// DELETE-based recreate sequence is unsafe because it destroys a healthy
+	// runtime before its replacement has passed template/allocation/capacity
+	// creation. This contract creates first, then retires the old runtime only
+	// after the replacement is ready and records an exact idempotency receipt.
+	orch.POST("/servers/:id/recreate-v1", func(c *pulpgin.Context) {
+		var request orchestration.RecreateServerRequestV1
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(400, pulpgin.H{"error": err.Error()})
+			return
+		}
+		receipt, err := recreateCore.Recreate(c.Param("id"), request)
+		if err != nil {
+			c.JSON(creationHTTPStatus(err), pulpgin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, receipt)
+	})
+
+	// mods-reprovision-v1 is deliberately narrower than recreate-v1. It
+	// retires the current runtime only; the Fleet generation owner schedules
+	// the subsequent provision for the same workload. The world volume is not
+	// touched and the port/IP reservation is re-keyed to server_id, exactly as
+	// the historical keep_ports delete did, but now behind a closed typed route.
+	orch.POST("/servers/:id/mods-reprovision-v1", func(c *pulpgin.Context) {
+		var request struct {
+			ServerID   string `json:"server_id"`
+			NodeID     string `json:"node_id"`
+			Generation uint64 `json:"generation"`
+			Fence      string `json:"fence"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil || !validFleetIdentity(request.ServerID) ||
+			!validFleetIdentity(request.NodeID) || request.Generation == 0 || !validFleetIdentity(request.Fence) {
+			c.JSON(400, pulpgin.H{"error": "invalid fenced mods reprovision request"})
+			return
+		}
+		id := c.Param("id")
+		if !validFleetIdentity(id) {
+			c.JSON(400, pulpgin.H{"error": "invalid container identity"})
+			return
+		}
+		if err := retireServer(id, true, request.ServerID, docker.Destroy, capacity, portPools, ipp); err != nil {
+			c.JSON(500, pulpgin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, pulpgin.H{"server_id": request.ServerID, "node_id": request.NodeID, "generation": request.Generation, "fence": request.Fence, "world_preserved": true, "ports_preserved": true})
 	})
 
 	registerFleetLifecycleRoutes(orch)

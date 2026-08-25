@@ -1,0 +1,20 @@
+schema_version = 1
+name = "bananagine-shared-engine-proof"
+version = "0.1.0"
+
+# This application is an isolated non-production graph. Its only durable
+# capabilities belong to the unchanged shared engine cells below.
+cells = [
+  "../../../Bananagine/template-catalog-cell/pulp.cell.toml",
+  "../../../pulp-engines/workload-inventory-sqlite-cell/pulp.cell.toml",
+  "../../../pulp-engines/capacity-scheduler-sqlite-cell/pulp.cell.toml",
+  "../../../pulp-engines/workload-provisioning-sqlite-cell/pulp.cell.toml",
+  "../../../pulp-engines/runtime-control-sqlite-cell/pulp.cell.toml",
+  "lua-orchestrator.pulp.cell.toml",
+  "probe/pulp.cell.toml",
+]
+
+[orchestrator]
+manifest = "lua-orchestrator.pulp.cell.toml"
+script = "shared-engine-proof.lua"
+sha256 = "2773838e97a3e122971810add5649ac0e55d36aef2ad0266b83b0cc3b7432d80"

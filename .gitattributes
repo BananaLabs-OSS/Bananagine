@@ -1,0 +1,3 @@
+# Keep text files portable and prevent platform Git settings from reintroducing
+# CRLF into source, manifests, scripts, or documentation.
+* text=auto eol=lf

@@ -272,6 +272,7 @@ func stageProductionApplicationBundle(t *testing.T, repoRoot, devRoot string) (b
 		filepath.Join(bundleRoot, "Bananagine", "composition"),
 		filepath.Join(bundleRoot, "Bananagine", "registry-cell"),
 		filepath.Join(bundleRoot, "Bananagine", "template-catalog-cell"),
+		filepath.Join(bundleRoot, "Bananagine", "state-cell"),
 		filepath.Join(bundleRoot, "Bananagine", "worker-cell"),
 		filepath.Join(bundleRoot, "Bananagine", "pulp-cell"),
 		filepath.Join(bundleRoot, "Pulp-Lua", "pulp-cell"),
@@ -287,14 +288,14 @@ func stageProductionApplicationBundle(t *testing.T, repoRoot, devRoot string) (b
 	copyBundleFile(t, filepath.Join(repoRoot, "composition", "lua-orchestrator.pulp.cell.toml"), filepath.Join(bundleRoot, "Bananagine", "composition", "lua-orchestrator.pulp.cell.toml"))
 	copyBundleFile(t, filepath.Join(repoRoot, "registry-cell", "pulp.cell.toml"), filepath.Join(bundleRoot, "Bananagine", "registry-cell", "pulp.cell.toml"))
 	copyBundleFile(t, filepath.Join(repoRoot, "template-catalog-cell", "pulp.cell.toml"), filepath.Join(bundleRoot, "Bananagine", "template-catalog-cell", "pulp.cell.toml"))
+	copyBundleFile(t, filepath.Join(repoRoot, "state-cell", "pulp.cell.toml"), filepath.Join(bundleRoot, "Bananagine", "state-cell", "pulp.cell.toml"))
 	copyBundleFile(t, filepath.Join(repoRoot, "worker-cell", "pulp.cell.toml"), filepath.Join(bundleRoot, "Bananagine", "worker-cell", "pulp.cell.toml"))
 	facadeManifest := filepath.Join(bundleRoot, "Bananagine", "pulp-cell", "pulp.cell.toml")
 	copyBundleFile(t, filepath.Join(repoRoot, "pulp-cell", "pulp.cell.toml"), facadeManifest)
 	expandProductionFacadeManifest(t, facadeManifest)
 	copyBundleFile(t, filepath.Join(repoRoot, "templates", "example-minecraft.yaml"), filepath.Join(storageRoot, "apps", "bananagine", "default", "cells", "bananagine", "primary", "templates", "example-minecraft.yaml"))
 
-	build(t, filepath.Join(repoRoot, "registry-cell"), filepath.Join(bundleRoot, "Bananagine", "registry-cell", "bananagine-registry.wasm"), goCache, true)
-	build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(bundleRoot, "Bananagine", "template-catalog-cell", "bananagine-template-catalog.wasm"), goCache, true)
+	build(t, filepath.Join(repoRoot, "state-cell"), filepath.Join(bundleRoot, "Bananagine", "state-cell", "bananagine-state.wasm"), goCache, true)
 	build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(bundleRoot, "Bananagine", "worker-cell", "bananagine-worker.wasm"), goCache, true)
 	build(t, filepath.Join(repoRoot, "pulp-cell"), filepath.Join(bundleRoot, "Bananagine", "pulp-cell", "bananagine.wasm"), goCache, true)
 	build(t, filepath.Join(devRoot, "Pulp-Lua", "pulp-cell"), filepath.Join(bundleRoot, "Pulp-Lua", "pulp-cell", "lua-orchestrator.wasm"), goCache, true)
@@ -1028,6 +1029,7 @@ func TestProductionBundleWiring(t *testing.T) {
 		`"bananagine.registry.v1.remove_match"`,
 		`"bananagine.template-catalog.v1.replace"`,
 		`"bananagine.worker.v1.http.submit"`,
+		`"bananagine-registry"`,
 		`"bananagine-template-catalog"`,
 		`"bananagine-worker"`)
 	assertContainsFile(t, filepath.Join(repoRoot, "pulp-cell", "pulp.cell.toml"),
@@ -1044,6 +1046,8 @@ func TestProductionBundleWiring(t *testing.T) {
 	assertContainsFile(t, appManifestPath,
 		`"../registry-cell/pulp.cell.toml"`,
 		`"../template-catalog-cell/pulp.cell.toml"`,
+		`artifact = "../state-cell/pulp.cell.toml"`,
+		`members = ["bananagine-registry", "bananagine-template-catalog"]`,
 		`"../worker-cell/pulp.cell.toml"`,
 		`"lua-orchestrator.pulp.cell.toml"`,
 		`"../pulp-cell/pulp.cell.toml"`,
@@ -1059,7 +1063,7 @@ func TestProductionBundleWiring(t *testing.T) {
 		t.Fatal("Lua cell manifest must not duplicate the app-owned orchestration script")
 	}
 
-	dockerfilePath := filepath.Join(devRoot, "Pulp.Dockerfile")
+	dockerfilePath := filepath.Join(devRoot, "ops", "Pulp.Dockerfile")
 	dockerfile, err := os.ReadFile(dockerfilePath)
 	if err != nil {
 		t.Fatal(err)
@@ -1069,7 +1073,7 @@ func TestProductionBundleWiring(t *testing.T) {
 		`/app/application/Bananagine/composition/pulp.app.toml`,
 		`-app /tmp/application/Bananagine/composition/pulp.app.toml`,
 		`-manifest /tmp/pulp.cell.toml`,
-		`/out/application/Bananagine/template-catalog-cell/bananagine-template-catalog.wasm`,
+		`/out/application/Bananagine/state-cell/bananagine-state.wasm`,
 		`/out/application/Bananagine/worker-cell/bananagine-worker.wasm`,
 	} {
 		if !strings.Contains(text, fragment) {
@@ -1089,8 +1093,7 @@ func TestProductionBundleWiring(t *testing.T) {
 	dedicatedText := string(dedicatedDockerfile)
 	for _, fragment := range []string{
 		`/out/application/Bananagine/pulp-cell/bananagine.wasm`,
-		`/out/application/Bananagine/registry-cell/bananagine-registry.wasm`,
-		`/out/application/Bananagine/template-catalog-cell/bananagine-template-catalog.wasm`,
+		`/out/application/Bananagine/state-cell/bananagine-state.wasm`,
 		`/out/application/Bananagine/worker-cell/bananagine-worker.wasm`,
 		`/out/application/Pulp-Lua/pulp-cell/lua-orchestrator.wasm`,
 		`/out/application/Bananagine/composition/pulp.app.toml`,
@@ -1113,10 +1116,10 @@ func TestProductionBundleWiring(t *testing.T) {
 		`Pulp-ext-http`,
 		`Pulp-ext-workers`)
 
-	assertContainsFile(t, filepath.Join(devRoot, "deploy", "gameserver", "deploy.sh"),
+	assertContainsFile(t, filepath.Join(devRoot, "ops", "deploy", "gameserver", "deploy.sh"),
 		"This consumes an already staged source bundle. It intentionally does not pull",
 		"Pulp-Lua deliberately does not appear in REQUIRED_GIT_REPOS.",
-		`$SOURCE_ROOT/Bananagine/template-catalog-cell/pulp.cell.toml`,
+		`$SOURCE_ROOT/Bananagine/state-cell/pulp.cell.toml`,
 		`$SOURCE_ROOT/Bananagine/worker-cell/pulp.cell.toml`,
 		`lua_sha="$(hash_unowned_go_source "$SOURCE_ROOT/Pulp-Lua")"`,
 		`printf 'Pulp-Lua tree:%s\n' "$lua_sha" >>"$output"`)

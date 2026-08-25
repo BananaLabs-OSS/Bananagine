@@ -1,0 +1,21 @@
+name = "bananagine-state"
+version = "0.1.0"
+wasm = "bananagine-state.wasm"
+
+# This physical cell retains both logical packages' public provider contracts.
+provides = [
+  "bananagine.registry.v1.register",
+  "bananagine.registry.v1.list",
+  "bananagine.registry.v1.get",
+  "bananagine.registry.v1.update",
+  "bananagine.registry.v1.unregister",
+  "bananagine.registry.v1.set_players",
+  "bananagine.registry.v1.put_match",
+  "bananagine.registry.v1.remove_match",
+  "bananagine.template-catalog.v1.replace",
+  "bananagine.template-catalog.v1.list",
+  "bananagine.template-catalog.v1.get",
+  "bananagine.template-catalog.v1.snapshot.export",
+  "bananagine.template-catalog.v1.snapshot.import",
+]
+capabilities = []

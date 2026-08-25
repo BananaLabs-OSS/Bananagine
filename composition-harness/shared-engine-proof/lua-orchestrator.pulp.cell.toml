@@ -1,0 +1,24 @@
+name = "bananagine-shared-engine-proof-lua"
+version = "0.1.0"
+wasm = "../../../Pulp-Lua/pulp-cell/lua-orchestrator.wasm"
+
+provides = ["orchestrator.dispatch", "orchestrator.saga.execute.v1"]
+consumes = [
+  "bananagine.template-catalog.v1.get",
+  "workload-inventory.v1.workload.create",
+  "capacity-scheduler.v1.capacity.set",
+  "capacity-scheduler.v1.reserve",
+  "workload-provisioning.v1.provision",
+  "runtime-control.v1.desired.apply",
+]
+depends_on = [
+  "bananagine-template-catalog",
+  "workload-inventory",
+  "capacity-scheduler",
+  "workload-provisioning",
+  "runtime-control",
+]
+capabilities = []
+
+[config]
+timeout_ms = 5000

@@ -9,7 +9,12 @@ cells = [
   "../pulp-cell/pulp.cell.toml",
 ]
 
+[[execution_units]]
+name = "bananagine-state"
+artifact = "../state-cell/pulp.cell.toml"
+members = ["bananagine-registry", "bananagine-template-catalog"]
+
 [orchestrator]
 manifest = "lua-orchestrator.pulp.cell.toml"
 script = "bananagine.lua"
-sha256 = "14df34e8daf46d9d01923abd7565ed4d01c399b43033179aa6e594ee51f6500c"
+sha256 = "589d23646e47ec72a1864a29d7630a301c735b1f62da8dfd4271016e0f85d550"

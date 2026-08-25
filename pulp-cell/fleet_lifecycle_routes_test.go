@@ -72,11 +72,12 @@ func TestFleetEffectIdentityMatchesCanonicalEffectEnvelope(t *testing.T) {
 
 func TestFleetLifecycleStatusesMatchCanonicalExecutor(t *testing.T) {
 	want := map[string]string{
-		"reconfigure": "reconfigured",
-		"suspend":     "suspended",
-		"resume":      "resumed",
-		"restart":     "restarted",
-		"regenerate":  "regenerated",
+		"reconfigure":  "reconfigured",
+		"suspend":      "suspended",
+		"resume":       "resumed",
+		"restart":      "restarted",
+		"regenerate":   "regenerated",
+		"config-apply": "config_applied",
 	}
 	for action, status := range want {
 		if got := fleetLifecycleStatus(action); got != status {
@@ -98,5 +99,30 @@ func TestFleetLifecycleResourceChangesFailClosed(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("resource reconfigure error = %v, want unsupported failure", err)
+	}
+}
+
+func TestFleetAccessApplyCommandsAreTypedBoundedAndFailClosed(t *testing.T) {
+	request := fleetAccessApplyRequest{Operation: "access", Access: &fleetAccessMutationDTO{Kind: "whitelist", Action: "add", Entries: []fleetPlayerIdentityDTO{{Name: "Steve_1", UUID: "00000000-0000-0000-0000-000000000001", Platform: "java"}}}}
+	if err := validateFleetAccessMutation(*request.Access); err != nil {
+		t.Fatal(err)
+	}
+	commands, err := fleetAccessApplyCommands(request)
+	if err != nil || len(commands) != 1 || len(commands[0]) != 2 || commands[0][0] != "rcon" || commands[0][1] != "whitelist add Steve_1" {
+		t.Fatalf("access commands = %#v, %v", commands, err)
+	}
+	player := fleetPlayerActionDTO{Action: "announce", Value: "Server restarting"}
+	player.Reason.Code = "maintenance"
+	if err := validateFleetPlayerAction(player); err != nil {
+		t.Fatal(err)
+	}
+	commands, err = fleetAccessApplyCommands(fleetAccessApplyRequest{Operation: "player_action", Player: &player})
+	if err != nil || commands[0][1] != `tellraw @a {"text":"Server restarting"}` {
+		t.Fatalf("announcement commands = %#v, %v", commands, err)
+	}
+	for _, invalid := range []fleetAccessMutationDTO{{Kind: "whitelist", Action: "add"}, {Kind: "whitelist", Action: "add", Entries: []fleetPlayerIdentityDTO{{Name: "bad name", UUID: "00000000-0000-0000-0000-000000000001", Platform: "java"}}}} {
+		if err := validateFleetAccessMutation(invalid); err == nil {
+			t.Fatalf("invalid access mutation accepted: %#v", invalid)
+		}
 	}
 }

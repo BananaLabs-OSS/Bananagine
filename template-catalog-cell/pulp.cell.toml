@@ -12,3 +12,9 @@ provides = [
 consumes = []
 depends_on = []
 capabilities = []
+
+# Same trust, lifecycle, and host-authority boundary as the registry owner.
+[execution]
+mode = "fusible"
+group = "bananagine-state"
+abi = "pulp-linear-v1"
