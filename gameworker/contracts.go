@@ -1,4 +1,4 @@
-// Package gameworker defines Bananagine's scoped asynchronous host-effect
+// Package gameworker defines a scoped asynchronous host-effect
 // boundary. The WASM owner keeps idempotency and receipts; Pulp-ext-workers
 // owns goroutines, network access, quotas, cancellation, and instance scope.
 package gameworker
@@ -6,7 +6,7 @@ package gameworker
 import "fmt"
 
 const (
-	Capability = "bananagine.worker.v1"
+	Capability = "async-http-job.v1"
 
 	FnSubmit         = Capability + ".http.submit"
 	FnStatus         = Capability + ".status"

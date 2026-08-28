@@ -19,6 +19,11 @@ The canonical production path is a composed Pulp application:
 - `composition/bananagine.lua` defines application-level registry workflows.
 - `registry-cell/` and `template-catalog-cell/` are reusable logical state
   packages; `state-cell/` is their fused deployment artifact.
+- Shared `pulp-engines` own durable workload inventory, capacity reservation,
+  provisioning intent, and desired runtime state. `composition/bananagine.lua`
+  translates Bananagine server/template vocabulary into their opaque contracts.
+  The existing facade still settles privileged Docker effects while that final
+  adapter migration is proven against the public API.
 
 The native binary (`cmd/server/`) is the legacy build kept for reference; the
 Dockerfile still targets it but production runs the composed cells.
@@ -30,14 +35,14 @@ Dockerfile still targets it but production runs the composed cells.
 
 Build the cell (from `pulp-cell/`):
 ```bash
-GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o bananagine.wasm .
+GOOS=wasip1 GOARCH=wasm go build -trimpath -buildvcs=false -buildmode=c-shared -o bananagine.wasm .
 ```
 
 Build the fused state and Lua cells:
 
 ```bash
-(cd state-cell && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o bananagine-state.wasm .)
-(cd ../Pulp-Lua/pulp-cell && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o lua-orchestrator.wasm .)
+(cd state-cell && GOOS=wasip1 GOARCH=wasm go build -trimpath -buildvcs=false -buildmode=c-shared -o runtime-catalog-state.wasm .)
+(cd ../Pulp-Lua/pulp-cell && GOOS=wasip1 GOARCH=wasm go build -trimpath -buildvcs=false -buildmode=c-shared -o lua-orchestrator.wasm .)
 ```
 
 Run the host (from `pulp-deployment/`):

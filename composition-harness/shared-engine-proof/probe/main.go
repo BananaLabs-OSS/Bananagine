@@ -62,7 +62,7 @@ func init() {
 				c.JSON(500, pulpgin.H{"error": err.Error()})
 				return
 			}
-			if _, err := pulp.Call("bananagine-template-catalog", templatecatalog.FnReplace, encoded); err != nil {
+			if _, err := pulp.Call("template-catalog", templatecatalog.FnReplace, encoded); err != nil {
 				c.JSON(503, pulpgin.H{"error": fmt.Sprintf("template replace: %v", err)})
 				return
 			}

@@ -1,4 +1,4 @@
-// bananagine-state-cell is the first Pulp fusible artifact. It deliberately
+// runtime-catalog-state-cell is the first Pulp fusible artifact. It deliberately
 // compiles the two capability-free state owners into one Go/Wasm program while
 // retaining every existing provider name. Callers therefore keep their logical
 // module contracts even though one Wasm instance owns both heaps.
@@ -7,11 +7,11 @@ package main
 import (
 	"fmt"
 
-	"bananagine-registry-cell/handlers"
 	"github.com/BananaLabs-OSS/Fiber/pulp"
 	"github.com/bananalabs-oss/bananagine/registry"
 	"github.com/bananalabs-oss/bananagine/templatecatalog"
 	"github.com/vmihailenco/msgpack/v5"
+	"runtime-directory-cell/handlers"
 )
 
 func init() {

@@ -1,4 +1,4 @@
-module bananagine-template-catalog-cell
+module template-catalog-cell
 
 go 1.25.6
 

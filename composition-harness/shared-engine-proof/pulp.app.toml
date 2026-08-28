@@ -17,4 +17,4 @@ cells = [
 [orchestrator]
 manifest = "lua-orchestrator.pulp.cell.toml"
 script = "shared-engine-proof.lua"
-sha256 = "2773838e97a3e122971810add5649ac0e55d36aef2ad0266b83b0cc3b7432d80"
+sha256 = "305d3621d03ecc0c66d65112a814103f2ca0a3d4130cced341b476cf6e2c3130"

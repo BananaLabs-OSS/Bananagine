@@ -7,6 +7,7 @@ require (
 	github.com/BananaLabs-OSS/Pulp-ext-docker v0.0.0
 	github.com/BananaLabs-OSS/Pulp-ext-fs v0.0.0
 	github.com/BananaLabs-OSS/Pulp-ext-http v0.0.0
+	github.com/BananaLabs-OSS/Pulp-ext-sqlite v0.0.0
 	github.com/BananaLabs-OSS/Pulp-ext-workers v0.0.0
 )
 
@@ -23,14 +24,19 @@ require (
 	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
@@ -41,6 +47,10 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
+	modernc.org/libc v1.70.0 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.48.2 // indirect
 )
 
 replace (
@@ -49,6 +59,7 @@ replace (
 	github.com/BananaLabs-OSS/Pulp-ext-docker => ../../Pulp-ext-docker
 	github.com/BananaLabs-OSS/Pulp-ext-fs => ../../Pulp-ext-fs
 	github.com/BananaLabs-OSS/Pulp-ext-http => ../../Pulp-ext-http
+	github.com/BananaLabs-OSS/Pulp-ext-sqlite => ../../Pulp-ext-sqlite
 	github.com/BananaLabs-OSS/Pulp-ext-workers => ../../Pulp-ext-workers
 	github.com/bananalabs-oss/potassium => ../../Potassium
 )

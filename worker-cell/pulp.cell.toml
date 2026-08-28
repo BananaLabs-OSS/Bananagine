@@ -1,13 +1,14 @@
-name = "bananagine-worker"
+name = "async-http-job"
 version = "0.1.0"
-wasm = "bananagine-worker.wasm"
+wasm = "async-http-job.wasm"
+wasm_sha256 = "48a3c34c256c3afe9bec69929d091a47eb7505ba279e9c61c1a929cd39032f9a"
 
 provides = [
-  "bananagine.worker.v1.http.submit",
-  "bananagine.worker.v1.status",
-  "bananagine.worker.v1.cancel",
-  "bananagine.worker.v1.snapshot.export",
-  "bananagine.worker.v1.snapshot.import",
+  "async-http-job.v1.http.submit",
+  "async-http-job.v1.status",
+  "async-http-job.v1.cancel",
+  "async-http-job.v1.snapshot.export",
+  "async-http-job.v1.snapshot.import",
 ]
 consumes = []
 depends_on = []

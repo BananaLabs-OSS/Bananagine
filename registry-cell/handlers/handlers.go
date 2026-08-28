@@ -1,5 +1,5 @@
 // Package handlers implements the MessagePack boundary for the standalone
-// Bananagine registry cell without importing WASM-only Pulp bindings.
+// runtime directory cell without importing WASM-only Pulp bindings.
 package handlers
 
 import (

@@ -4,7 +4,7 @@ wasm = "../../../Pulp-Lua/pulp-cell/lua-orchestrator.wasm"
 
 provides = ["orchestrator.dispatch", "orchestrator.saga.execute.v1"]
 consumes = [
-  "bananagine.template-catalog.v1.get",
+  "template-catalog.v1.get",
   "workload-inventory.v1.workload.create",
   "capacity-scheduler.v1.capacity.set",
   "capacity-scheduler.v1.reserve",
@@ -12,7 +12,7 @@ consumes = [
   "runtime-control.v1.desired.apply",
 ]
 depends_on = [
-  "bananagine-template-catalog",
+  "template-catalog",
   "workload-inventory",
   "capacity-scheduler",
   "workload-provisioning",

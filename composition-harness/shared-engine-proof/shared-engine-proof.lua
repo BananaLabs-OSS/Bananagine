@@ -32,7 +32,7 @@ local function key(value)
 end
 
 local function template_entry(name)
-  local result = pulp.call("bananagine-template-catalog", "bananagine.template-catalog.v1.get", { name = name })
+  local result = pulp.call("template-catalog", "template-catalog.v1.get", { name = name })
   if not result.ok then
     error("bananagine template lookup failed")
   end

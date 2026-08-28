@@ -1,5 +1,5 @@
 // Package templatecatalog owns the transport-neutral game-template catalog
-// used by Bananagine compositions. The owner stores only public projections;
+// usable by any application composition. The owner stores only public projections;
 // filesystem discovery and YAML parsing remain privileged facade work.
 package templatecatalog
 
@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	Capability = "bananagine.template-catalog.v1"
+	Capability = "template-catalog.v1"
 
 	FnReplace        = Capability + ".replace"
 	FnList           = Capability + ".list"

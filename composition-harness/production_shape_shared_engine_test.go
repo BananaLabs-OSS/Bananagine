@@ -3,9 +3,7 @@ package compositionharness
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -36,50 +34,7 @@ func TestProductionShapeSharedEngineCompositionPreservesCreateParity(t *testing.
 
 func stageProductionShapeSharedEngineBundle(t *testing.T, repoRoot, devRoot string) (bundleRoot, storageRoot, hostExe string) {
 	t.Helper()
-	bundleRoot, storageRoot, _ = stageProductionApplicationBundle(t, repoRoot, devRoot)
-	goCache := filepath.Join(t.TempDir(), "gocache")
-	for _, cell := range []string{
-		"workload-inventory-sqlite-cell",
-		"capacity-scheduler-sqlite-cell",
-		"workload-provisioning-sqlite-cell",
-		"runtime-control-sqlite-cell",
-	} {
-		source := filepath.Join(devRoot, "pulp-engines", cell)
-		destination := filepath.Join(bundleRoot, "pulp-engines", cell)
-		if err := os.MkdirAll(destination, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		copyBundleFile(t, filepath.Join(source, "pulp.cell.toml"), filepath.Join(destination, "pulp.cell.toml"))
-		engine := strings.TrimSuffix(cell, "-sqlite-cell")
-		build(t, filepath.Join(source, "cmd", engine), filepath.Join(destination, engine+".wasm"), goCache, true)
-	}
-
-	appPath := filepath.Join(bundleRoot, "Bananagine", "composition", "pulp.app.toml")
-	app, err := os.ReadFile(appPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const currentTail = "  \"../pulp-cell/pulp.cell.toml\",\n]"
-	const sharedTail = `  "../pulp-cell/pulp.cell.toml",
-  "../../pulp-engines/workload-inventory-sqlite-cell/pulp.cell.toml",
-  "../../pulp-engines/capacity-scheduler-sqlite-cell/pulp.cell.toml",
-  "../../pulp-engines/workload-provisioning-sqlite-cell/pulp.cell.toml",
-  "../../pulp-engines/runtime-control-sqlite-cell/pulp.cell.toml",
-]`
-	expanded := strings.Replace(string(app), currentTail, sharedTail, 1)
-	if expanded == string(app) {
-		t.Fatalf("production composition shape changed; missing expected cell-list tail")
-	}
-	if err := os.WriteFile(appPath, []byte(expanded), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	hostExe = build(t,
-		filepath.Join(repoRoot, "composition-harness", "shared-engine-proof", "host"),
-		filepath.Join(t.TempDir(), "production-shape-proof-host.exe"),
-		goCache,
-		false,
-	)
-	return bundleRoot, storageRoot, hostExe
+	return stageProductionApplicationBundle(t, repoRoot, devRoot)
 }
 
 func runProductionShapeCreate(t *testing.T, hostExe, bundleRoot, storageRoot string, runtime *fakeDockerRuntime) []byte {

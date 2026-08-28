@@ -6,7 +6,7 @@
 //
 // Build:
 //
-//	GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o bananagine.wasm .
+//	GOOS=wasip1 GOARCH=wasm go build -trimpath -buildvcs=false -buildmode=c-shared -o bananagine.wasm .
 package main
 
 import (

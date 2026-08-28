@@ -1,4 +1,4 @@
-module bananagine-worker-cell
+module async-http-job-cell
 
 go 1.25.6
 

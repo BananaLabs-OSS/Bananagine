@@ -276,6 +276,10 @@ func stageProductionApplicationBundle(t *testing.T, repoRoot, devRoot string) (b
 		filepath.Join(bundleRoot, "Bananagine", "worker-cell"),
 		filepath.Join(bundleRoot, "Bananagine", "pulp-cell"),
 		filepath.Join(bundleRoot, "Pulp-Lua", "pulp-cell"),
+		filepath.Join(bundleRoot, "pulp-engines", "workload-inventory-sqlite-cell"),
+		filepath.Join(bundleRoot, "pulp-engines", "capacity-scheduler-sqlite-cell"),
+		filepath.Join(bundleRoot, "pulp-engines", "workload-provisioning-sqlite-cell"),
+		filepath.Join(bundleRoot, "pulp-engines", "runtime-control-sqlite-cell"),
 		filepath.Join(storageRoot, "apps", "bananagine", "default", "cells", "bananagine", "primary", "templates"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -295,10 +299,16 @@ func stageProductionApplicationBundle(t *testing.T, repoRoot, devRoot string) (b
 	expandProductionFacadeManifest(t, facadeManifest)
 	copyBundleFile(t, filepath.Join(repoRoot, "templates", "example-minecraft.yaml"), filepath.Join(storageRoot, "apps", "bananagine", "default", "cells", "bananagine", "primary", "templates", "example-minecraft.yaml"))
 
-	build(t, filepath.Join(repoRoot, "state-cell"), filepath.Join(bundleRoot, "Bananagine", "state-cell", "bananagine-state.wasm"), goCache, true)
-	build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(bundleRoot, "Bananagine", "worker-cell", "bananagine-worker.wasm"), goCache, true)
+	build(t, filepath.Join(repoRoot, "state-cell"), filepath.Join(bundleRoot, "Bananagine", "state-cell", "runtime-catalog-state.wasm"), goCache, true)
+	build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(bundleRoot, "Bananagine", "worker-cell", "async-http-job.wasm"), goCache, true)
 	build(t, filepath.Join(repoRoot, "pulp-cell"), filepath.Join(bundleRoot, "Bananagine", "pulp-cell", "bananagine.wasm"), goCache, true)
 	build(t, filepath.Join(devRoot, "Pulp-Lua", "pulp-cell"), filepath.Join(bundleRoot, "Pulp-Lua", "pulp-cell", "lua-orchestrator.wasm"), goCache, true)
+	for _, engine := range []string{"workload-inventory", "capacity-scheduler", "workload-provisioning", "runtime-control"} {
+		source := filepath.Join(devRoot, "pulp-engines", engine+"-sqlite-cell")
+		destination := filepath.Join(bundleRoot, "pulp-engines", engine+"-sqlite-cell")
+		copyBundleFile(t, filepath.Join(source, "pulp.cell.toml"), filepath.Join(destination, "pulp.cell.toml"))
+		build(t, filepath.Join(source, "cmd", engine), filepath.Join(destination, engine+".wasm"), goCache, true)
+	}
 	hostExe = build(t, filepath.Join(repoRoot, "pulp-deployment"), filepath.Join(temp, "pulp-host.exe"), goCache, false)
 	return bundleRoot, storageRoot, hostExe
 }
@@ -732,9 +742,9 @@ func TestPulpLuaComposesGamePlatformOwners(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	registryWASM := build(t, filepath.Join(repoRoot, "registry-cell"), filepath.Join(temp, "bananagine-registry.wasm"), goCache, true)
-	templateCatalogWASM := build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(temp, "bananagine-template-catalog.wasm"), goCache, true)
-	workerWASM := build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(temp, "bananagine-worker.wasm"), goCache, true)
+	registryWASM := build(t, filepath.Join(repoRoot, "registry-cell"), filepath.Join(temp, "runtime-directory.wasm"), goCache, true)
+	templateCatalogWASM := build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(temp, "template-catalog.wasm"), goCache, true)
+	workerWASM := build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(temp, "async-http-job.wasm"), goCache, true)
 	luaWASM := build(t, filepath.Join(devRoot, "Pulp-Lua", "pulp-cell"), filepath.Join(temp, "bananagine-lua.wasm"), goCache, true)
 	probeWASM := build(t, filepath.Join(repoRoot, "composition", "probe-cell"), filepath.Join(temp, "composition-probe.wasm"), goCache, true)
 	hostExe := build(t, filepath.Join(repoRoot, "pulp-deployment"), filepath.Join(temp, "pulp-host.exe"), goCache, false)
@@ -1015,23 +1025,33 @@ func TestProductionBundleWiring(t *testing.T) {
 	}
 
 	assertContainsFile(t, filepath.Join(repoRoot, "registry-cell", "pulp.cell.toml"),
-		`"bananagine.registry.v1.register"`,
-		`"bananagine.registry.v1.remove_match"`)
+		`"runtime-directory.v1.register"`,
+		`"runtime-directory.v1.remove_match"`)
 	assertContainsFile(t, filepath.Join(repoRoot, "template-catalog-cell", "pulp.cell.toml"),
-		`"bananagine.template-catalog.v1.replace"`,
-		`"bananagine.template-catalog.v1.snapshot.import"`)
+		`"template-catalog.v1.replace"`,
+		`"template-catalog.v1.snapshot.import"`)
 	assertContainsFile(t, filepath.Join(repoRoot, "worker-cell", "pulp.cell.toml"),
-		`"bananagine.worker.v1.http.submit"`,
+		`"async-http-job.v1.http.submit"`,
 		`capabilities = ["workers"]`)
 	assertContainsFile(t, filepath.Join(repoRoot, "composition", "lua-orchestrator.pulp.cell.toml"),
 		`"orchestrator.dispatch"`,
-		`"bananagine.registry.v1.register"`,
-		`"bananagine.registry.v1.remove_match"`,
-		`"bananagine.template-catalog.v1.replace"`,
-		`"bananagine.worker.v1.http.submit"`,
-		`"bananagine-registry"`,
-		`"bananagine-template-catalog"`,
-		`"bananagine-worker"`)
+		`"runtime-directory.v1.register"`,
+		`"runtime-directory.v1.remove_match"`,
+		`"template-catalog.v1.replace"`,
+		`"async-http-job.v1.http.submit"`,
+		`"workload-inventory.v1.workload.create"`,
+		`"capacity-scheduler.v1.reserve"`,
+		`"workload-provisioning.v1.provision"`,
+		`"runtime-control.v1.desired.apply"`,
+		`"runtime-directory"`,
+		`"template-catalog"`,
+		`"async-http-job"`)
+	assertContainsFile(t, filepath.Join(repoRoot, "composition", "bananagine.lua"),
+		`pulp.on("bananagine.create-plan.v1"`,
+		`pulp.call("workload-inventory"`,
+		`pulp.call("capacity-scheduler"`,
+		`pulp.call("workload-provisioning"`,
+		`pulp.call("runtime-control"`)
 	assertContainsFile(t, filepath.Join(repoRoot, "pulp-cell", "pulp.cell.toml"),
 		`consumes = ["orchestrator.dispatch"]`,
 		`depends_on = ["bananagine-lua"]`)
@@ -1047,10 +1067,14 @@ func TestProductionBundleWiring(t *testing.T) {
 		`"../registry-cell/pulp.cell.toml"`,
 		`"../template-catalog-cell/pulp.cell.toml"`,
 		`artifact = "../state-cell/pulp.cell.toml"`,
-		`members = ["bananagine-registry", "bananagine-template-catalog"]`,
+		`members = ["runtime-directory", "template-catalog"]`,
 		`"../worker-cell/pulp.cell.toml"`,
 		`"lua-orchestrator.pulp.cell.toml"`,
 		`"../pulp-cell/pulp.cell.toml"`,
+		`"../../pulp-engines/workload-inventory-sqlite-cell/pulp.cell.toml"`,
+		`"../../pulp-engines/capacity-scheduler-sqlite-cell/pulp.cell.toml"`,
+		`"../../pulp-engines/workload-provisioning-sqlite-cell/pulp.cell.toml"`,
+		`"../../pulp-engines/runtime-control-sqlite-cell/pulp.cell.toml"`,
 		`manifest = "lua-orchestrator.pulp.cell.toml"`,
 		`script = "bananagine.lua"`,
 		fmt.Sprintf(`sha256 = "%x"`, digest))
@@ -1073,8 +1097,8 @@ func TestProductionBundleWiring(t *testing.T) {
 		`/app/application/Bananagine/composition/pulp.app.toml`,
 		`-app /tmp/application/Bananagine/composition/pulp.app.toml`,
 		`-manifest /tmp/pulp.cell.toml`,
-		`/out/application/Bananagine/state-cell/bananagine-state.wasm`,
-		`/out/application/Bananagine/worker-cell/bananagine-worker.wasm`,
+		`/out/application/Bananagine/state-cell/runtime-catalog-state.wasm`,
+		`/out/application/Bananagine/worker-cell/async-http-job.wasm`,
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("%s does not contain %q", dockerfilePath, fragment)
@@ -1093,8 +1117,8 @@ func TestProductionBundleWiring(t *testing.T) {
 	dedicatedText := string(dedicatedDockerfile)
 	for _, fragment := range []string{
 		`/out/application/Bananagine/pulp-cell/bananagine.wasm`,
-		`/out/application/Bananagine/state-cell/bananagine-state.wasm`,
-		`/out/application/Bananagine/worker-cell/bananagine-worker.wasm`,
+		`/out/application/Bananagine/state-cell/runtime-catalog-state.wasm`,
+		`/out/application/Bananagine/worker-cell/async-http-job.wasm`,
 		`/out/application/Pulp-Lua/pulp-cell/lua-orchestrator.wasm`,
 		`/out/application/Bananagine/composition/pulp.app.toml`,
 		`wasm_sha256 =`,
@@ -1114,6 +1138,7 @@ func TestProductionBundleWiring(t *testing.T) {
 		`Pulp-ext-docker`,
 		`Pulp-ext-fs`,
 		`Pulp-ext-http`,
+		`Pulp-ext-sqlite`,
 		`Pulp-ext-workers`)
 
 	assertContainsFile(t, filepath.Join(devRoot, "ops", "deploy", "gameserver", "deploy.sh"),
@@ -1129,7 +1154,7 @@ func build(t *testing.T, dir, output, goCache string, wasm bool) string {
 	t.Helper()
 	args := []string{"build", "-buildvcs=false", "-o", output}
 	if wasm {
-		args = append(args, "-buildmode=c-shared")
+		args = append(args, "-trimpath", "-buildmode=c-shared")
 	}
 	args = append(args, ".")
 	command := exec.Command("go", args...)

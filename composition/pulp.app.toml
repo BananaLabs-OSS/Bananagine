@@ -1,20 +1,25 @@
 schema_version = 1
 name = "bananagine"
-version = "0.6.0"
+version = "0.7.0"
+require_wasm_sha256 = true
 cells = [
   "../registry-cell/pulp.cell.toml",
   "../template-catalog-cell/pulp.cell.toml",
   "../worker-cell/pulp.cell.toml",
   "lua-orchestrator.pulp.cell.toml",
   "../pulp-cell/pulp.cell.toml",
+  "../../pulp-engines/workload-inventory-sqlite-cell/pulp.cell.toml",
+  "../../pulp-engines/capacity-scheduler-sqlite-cell/pulp.cell.toml",
+  "../../pulp-engines/workload-provisioning-sqlite-cell/pulp.cell.toml",
+  "../../pulp-engines/runtime-control-sqlite-cell/pulp.cell.toml",
 ]
 
 [[execution_units]]
-name = "bananagine-state"
+name = "runtime-catalog-state"
 artifact = "../state-cell/pulp.cell.toml"
-members = ["bananagine-registry", "bananagine-template-catalog"]
+members = ["runtime-directory", "template-catalog"]
 
 [orchestrator]
 manifest = "lua-orchestrator.pulp.cell.toml"
 script = "bananagine.lua"
-sha256 = "589d23646e47ec72a1864a29d7630a301c735b1f62da8dfd4271016e0f85d550"
+sha256 = "2643d5490208121472d43263b3ba902722d1ffa1e55061ffb46619b14bd96472"

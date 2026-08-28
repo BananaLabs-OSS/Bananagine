@@ -35,7 +35,7 @@ func (s *State) List(filter ListRequest) []Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Preserve legacy Bananagine semantics: no matches returns a nil slice,
+	// Preserve the established wire semantics: no matches returns a nil slice,
 	// which JSON encodes as null rather than [].
 	var result []Server
 	for _, server := range s.servers {

@@ -1,4 +1,4 @@
-module bananagine-registry-cell
+module runtime-directory-cell
 
 go 1.25.6
 

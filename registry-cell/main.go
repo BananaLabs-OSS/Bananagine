@@ -4,7 +4,7 @@ import (
 	"github.com/BananaLabs-OSS/Fiber/pulp"
 	"github.com/bananalabs-oss/bananagine/registry"
 
-	"bananagine-registry-cell/handlers"
+	"runtime-directory-cell/handlers"
 )
 
 func init() {

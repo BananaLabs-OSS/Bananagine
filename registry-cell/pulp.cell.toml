@@ -1,22 +1,23 @@
-name = "bananagine-registry"
+name = "runtime-directory"
 version = "0.1.0"
-wasm = "bananagine-registry.wasm"
+wasm = "runtime-directory.wasm"
+wasm_sha256 = "79e728a0d105531dee932feeffae971419f1aa0266c365002a3a2d479cab99f5"
 
 provides = [
-  "bananagine.registry.v1.register",
-  "bananagine.registry.v1.list",
-  "bananagine.registry.v1.get",
-  "bananagine.registry.v1.update",
-  "bananagine.registry.v1.unregister",
-  "bananagine.registry.v1.set_players",
-  "bananagine.registry.v1.put_match",
-  "bananagine.registry.v1.remove_match",
+  "runtime-directory.v1.register",
+  "runtime-directory.v1.list",
+  "runtime-directory.v1.get",
+  "runtime-directory.v1.update",
+  "runtime-directory.v1.unregister",
+  "runtime-directory.v1.set_players",
+  "runtime-directory.v1.put_match",
+  "runtime-directory.v1.remove_match",
 ]
 consumes = []
 depends_on = []
 
 # Registry state is currently intentionally in-memory, matching the legacy
-# Bananagine registry. A later wave can add snapshots or lease reconstruction
+# runtime directory. A later wave can add snapshots or lease reconstruction
 # without changing this public capability.
 capabilities = []
 
@@ -24,5 +25,5 @@ capabilities = []
 # template catalog when a pulp-linear-v1 fused artifact is available.
 [execution]
 mode = "fusible"
-group = "bananagine-state"
+group = "runtime-catalog-state"
 abi = "pulp-linear-v1"

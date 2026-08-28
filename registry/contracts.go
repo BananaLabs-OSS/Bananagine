@@ -1,21 +1,21 @@
 // Package registry defines the transport-neutral server-registry capability
-// used by Bananagine compositions. Values intentionally carry both JSON and
+// usable by any application composition. Values intentionally carry both JSON and
 // MessagePack tags so HTTP and Pulp sibling adapters share one contract.
 package registry
 
 import "fmt"
 
 const (
-	Capability = "bananagine.registry.v1"
+	Capability = "runtime-directory.v1"
 
-	FnRegister    = "bananagine.registry.v1.register"
-	FnList        = "bananagine.registry.v1.list"
-	FnGet         = "bananagine.registry.v1.get"
-	FnUpdate      = "bananagine.registry.v1.update"
-	FnUnregister  = "bananagine.registry.v1.unregister"
-	FnSetPlayers  = "bananagine.registry.v1.set_players"
-	FnPutMatch    = "bananagine.registry.v1.put_match"
-	FnRemoveMatch = "bananagine.registry.v1.remove_match"
+	FnRegister    = "runtime-directory.v1.register"
+	FnList        = "runtime-directory.v1.list"
+	FnGet         = "runtime-directory.v1.get"
+	FnUpdate      = "runtime-directory.v1.update"
+	FnUnregister  = "runtime-directory.v1.unregister"
+	FnSetPlayers  = "runtime-directory.v1.set_players"
+	FnPutMatch    = "runtime-directory.v1.put_match"
+	FnRemoveMatch = "runtime-directory.v1.remove_match"
 )
 
 type ServerType string
@@ -39,8 +39,8 @@ type Match struct {
 	Players []string    `json:"players" msgpack:"players"`
 }
 
-// Server preserves the legacy HTTP wire shape, including the historical
-// capital-M "Metadata" field emitted by Bananagine's original Go struct.
+// Server preserves the established HTTP wire shape, including its historical
+// capital-M "Metadata" field.
 type Server struct {
 	ID          string            `json:"id" msgpack:"id"`
 	Type        ServerType        `json:"type" msgpack:"type"`

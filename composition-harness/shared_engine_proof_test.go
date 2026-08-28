@@ -58,7 +58,7 @@ func TestSharedEngineProofStagesPortableCellsAndResolvesProviders(t *testing.T) 
 		engineName := strings.TrimSuffix(cell, "-sqlite-cell")
 		build(t, filepath.Join(source, "cmd", engineName), filepath.Join(destination, engineName+".wasm"), goCache, true)
 	}
-	build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(bundleRoot, "Bananagine", "template-catalog-cell", "bananagine-template-catalog.wasm"), goCache, true)
+	build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(bundleRoot, "Bananagine", "template-catalog-cell", "template-catalog.wasm"), goCache, true)
 	build(t,
 		filepath.Join(repoRoot, "composition-harness", "shared-engine-proof", "probe"),
 		filepath.Join(proofRoot, "probe", "bananagine-shared-engine-proof-probe.wasm"),

@@ -1,6 +1,7 @@
 name = "bananagine"
 version = "0.6.0"
 wasm = "bananagine.wasm"
+wasm_sha256 = "3fcd2edecfc26ea531723968062976c8864e96b1773daf33fe92b9107eb8fb86"
 
 consumes = ["orchestrator.dispatch"]
 depends_on = ["bananagine-lua"]

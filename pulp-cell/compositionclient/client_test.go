@@ -22,11 +22,11 @@ func TestDispatchPreservesExactTargetEventAndValue(t *testing.T) {
 		if err := msgpack.Unmarshal(payload, &request); err != nil {
 			t.Fatal(err)
 		}
-		if request.Event != "bananagine.template-catalog.v1.list" {
+		if request.Event != "template-catalog.v1.list" {
 			t.Fatalf("event = %q", request.Event)
 		}
 		return msgpack.Marshal(workflow.DispatchResult{Value: map[string]string{"status": "ok"}})
-	}), "bananagine-lua", "bananagine.template-catalog.v1.list", map[string]any{})
+	}), "bananagine-lua", "template-catalog.v1.list", map[string]any{})
 	if err != nil || value["status"] != "ok" {
 		t.Fatalf("dispatch = (%v, %v)", value, err)
 	}
