@@ -745,6 +745,10 @@ func TestPulpLuaComposesGamePlatformOwners(t *testing.T) {
 	registryWASM := build(t, filepath.Join(repoRoot, "registry-cell"), filepath.Join(temp, "runtime-directory.wasm"), goCache, true)
 	templateCatalogWASM := build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(temp, "template-catalog.wasm"), goCache, true)
 	workerWASM := build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(temp, "async-http-job.wasm"), goCache, true)
+	workloadInventoryWASM := build(t, filepath.Join(devRoot, "pulp-engines", "workload-inventory-sqlite-cell", "cmd", "workload-inventory"), filepath.Join(temp, "workload-inventory.wasm"), goCache, true)
+	capacitySchedulerWASM := build(t, filepath.Join(devRoot, "pulp-engines", "capacity-scheduler-sqlite-cell", "cmd", "capacity-scheduler"), filepath.Join(temp, "capacity-scheduler.wasm"), goCache, true)
+	workloadProvisioningWASM := build(t, filepath.Join(devRoot, "pulp-engines", "workload-provisioning-sqlite-cell", "cmd", "workload-provisioning"), filepath.Join(temp, "workload-provisioning.wasm"), goCache, true)
+	runtimeControlWASM := build(t, filepath.Join(devRoot, "pulp-engines", "runtime-control-sqlite-cell", "cmd", "runtime-control"), filepath.Join(temp, "runtime-control.wasm"), goCache, true)
 	luaWASM := build(t, filepath.Join(devRoot, "Pulp-Lua", "pulp-cell"), filepath.Join(temp, "bananagine-lua.wasm"), goCache, true)
 	probeWASM := build(t, filepath.Join(repoRoot, "composition", "probe-cell"), filepath.Join(temp, "composition-probe.wasm"), goCache, true)
 	hostExe := build(t, filepath.Join(repoRoot, "pulp-deployment"), filepath.Join(temp, "pulp-host.exe"), goCache, false)
@@ -767,6 +771,10 @@ func TestPulpLuaComposesGamePlatformOwners(t *testing.T) {
 		filepath.Join(temp, "worker.toml"),
 		workerWASM,
 	)
+	workloadInventoryManifest := materializeManifest(t, filepath.Join(devRoot, "pulp-engines", "workload-inventory-sqlite-cell", "pulp.cell.toml"), filepath.Join(temp, "workload-inventory.toml"), workloadInventoryWASM)
+	capacitySchedulerManifest := materializeManifest(t, filepath.Join(devRoot, "pulp-engines", "capacity-scheduler-sqlite-cell", "pulp.cell.toml"), filepath.Join(temp, "capacity-scheduler.toml"), capacitySchedulerWASM)
+	workloadProvisioningManifest := materializeManifest(t, filepath.Join(devRoot, "pulp-engines", "workload-provisioning-sqlite-cell", "pulp.cell.toml"), filepath.Join(temp, "workload-provisioning.toml"), workloadProvisioningWASM)
+	runtimeControlManifest := materializeManifest(t, filepath.Join(devRoot, "pulp-engines", "runtime-control-sqlite-cell", "pulp.cell.toml"), filepath.Join(temp, "runtime-control.toml"), runtimeControlWASM)
 	luaManifest := materializeManifest(
 		t,
 		filepath.Join(repoRoot, "composition", "lua-orchestrator.pulp.cell.toml"),
@@ -799,13 +807,17 @@ cells = [
   %q,
   %q,
   %q,
+  %q,
+  %q,
+  %q,
+  %q,
 ]
 
 [orchestrator]
 manifest = %q
 script = %q
 sha256 = "%x"
-`, filepath.Base(registryManifest), filepath.Base(templateCatalogManifest), filepath.Base(workerManifest), filepath.Base(luaManifest), filepath.Base(probeManifest),
+`, filepath.Base(registryManifest), filepath.Base(templateCatalogManifest), filepath.Base(workerManifest), filepath.Base(workloadInventoryManifest), filepath.Base(capacitySchedulerManifest), filepath.Base(workloadProvisioningManifest), filepath.Base(runtimeControlManifest), filepath.Base(luaManifest), filepath.Base(probeManifest),
 		filepath.Base(luaManifest), filepath.Base(scriptPath), digest)
 	if err := os.WriteFile(appManifest, []byte(app), 0o600); err != nil {
 		t.Fatal(err)
