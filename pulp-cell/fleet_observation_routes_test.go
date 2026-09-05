@@ -47,11 +47,21 @@ func TestFleetGameRuleObservationIsFixedAndStrict(t *testing.T) {
 	if err != nil || got["doInsomnia"] != "false" {
 		t.Fatalf("doInsomnia gamerule = %#v, %v", got, err)
 	}
+	got, err = parseFleetGameRules("RULE:keepInventory:Gamerule keepInventory is currently set to: true\x1b[0m\n")
+	if err != nil || got["keepInventory"] != "true" {
+		t.Fatalf("ANSI gamerule = %#v, %v", got, err)
+	}
 	if _, err := parseFleetGameRules("RULE:injectedRule:true\n"); err == nil {
 		t.Fatal("unexpected gamerule was accepted")
 	}
 	if _, err := parseFleetGameRules("RULE:keepInventory:true;stop\n"); err == nil {
 		t.Fatal("injected gamerule value was accepted")
+	}
+	if _, err := parseFleetGameRules(""); err == nil {
+		t.Fatal("empty gamerule runtime output was accepted as ready")
+	}
+	if _, err := parseFleetGameRules("RULE:keepInventory:\n"); err == nil {
+		t.Fatal("valueless gamerule runtime output was accepted as ready")
 	}
 }
 
@@ -106,7 +116,7 @@ func TestParseFleetAccessSnapshotProjectsExactTypedFields(t *testing.T) {
 }
 
 func TestParseFleetPlayersReturnsBoundedNamedList(t *testing.T) {
-	got, err := parseFleetPlayers("There are 2 of a max of 20 players online: Steve, Alex_2")
+	got, err := parseFleetPlayers("There are 2 of a max of 20 players online: Steve, Alex_2\x1b[0m")
 	if err != nil {
 		t.Fatal(err)
 	}

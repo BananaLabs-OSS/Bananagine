@@ -1134,6 +1134,8 @@ func TestProductionBundleWiring(t *testing.T) {
 		`/out/application/Pulp-Lua/pulp-cell/lua-orchestrator.wasm`,
 		`/out/application/Bananagine/composition/pulp.app.toml`,
 		`wasm_sha256 =`,
+		`sed -i "/^wasm_sha256 = /d"`,
+		`sed -i '/^require_wasm_sha256 = /d'`,
 		`require_wasm_sha256 = true`,
 		`-app /tmp/application/Bananagine/composition/pulp.app.toml`,
 		`/app/data/apps/bananagine/default/cells/bananagine/primary`,

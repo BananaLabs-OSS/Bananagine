@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -32,6 +33,11 @@ var fleetObservedSettings = map[string]string{
 	"simulation-distance": "simulation_distance",
 	"motd":                "motd",
 }
+
+// The bundled rcon client appends terminal colour resets even when stdout is
+// not a TTY. Strip only bounded CSI colour sequences before validating the
+// otherwise strict gamerule/player response grammar.
+var fleetObservationANSIColor = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 var fleetObservedGameRules = []string{
 	"announceAdvancements",
@@ -430,6 +436,7 @@ func parseFleetGameRules(output string) (map[string]string, error) {
 	if len(output) > fleetObservationMaxBytes {
 		return nil, errors.New("gamerule observation exceeds limit")
 	}
+	output = fleetObservationANSIColor.ReplaceAllString(output, "")
 	allowed := make(map[string]struct{}, len(fleetObservedGameRules))
 	for _, rule := range fleetObservedGameRules {
 		allowed[rule] = struct{}{}
@@ -457,6 +464,9 @@ func parseFleetGameRules(output string) (map[string]string, error) {
 		}
 		result[rule] = value
 	}
+	if len(result) == 0 {
+		return nil, errors.New("gamerule observation is not ready")
+	}
 	return result, nil
 }
 
@@ -464,6 +474,7 @@ func parseFleetPlayers(output string) ([]string, error) {
 	if len(output) > fleetObservationMaxBytes {
 		return nil, errors.New("player observation exceeds limit")
 	}
+	output = fleetObservationANSIColor.ReplaceAllString(output, "")
 	index := strings.LastIndex(output, ":")
 	if index < 0 || index == len(output)-1 {
 		return []string{}, nil

@@ -84,8 +84,11 @@ RUN mkdir -p /out/application/Bananagine/composition /out/templates && \
         *) wasm_file=/out/application/Pulp-Lua/pulp-cell/lua-orchestrator.wasm ;; \
       esac; \
       wasm_sha="$(sha256sum "$wasm_file" | awk '{print $1}')"; \
+      sed -i "/^wasm_sha256 = /d" "$manifest"; \
       sed -i "/^wasm = /a wasm_sha256 = \"${wasm_sha}\"" "$manifest"; \
     done && \
+    sed -i '/^require_wasm_sha256 = /d' \
+      /out/application/Bananagine/composition/pulp.app.toml && \
     sed -i '/^version = /a require_wasm_sha256 = true' \
       /out/application/Bananagine/composition/pulp.app.toml
 
