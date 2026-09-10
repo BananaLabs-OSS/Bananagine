@@ -1,7 +1,7 @@
 name = "template-catalog"
 version = "0.1.0"
 wasm = "template-catalog.wasm"
-wasm_sha256 = "d1c73e254068ad95cb6f4432fca4ab31140137650ab0b6fc1468964490e187aa"
+wasm_sha256 = "5dd1c297a048186c0165638e3e24689695217387d32263feff1be79ac92869a8"
 
 provides = [
   "template-catalog.v1.replace",
