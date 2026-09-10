@@ -47,10 +47,11 @@ func (e hostAgentEngine) Create(_ context.Context, inv hostagent.Invocation) (ho
 		return hostagent.Outcome{}, permanentHostAgentError{err.Error()}
 	}
 	req := orchestration.CreateServerRequest{Template: spec.Template, ServerID: inv.WorkloadID, Env: spec.Environment, Resources: &orchestration.ResourceOverride{CPULimit: float64(spec.Resources.CPUMillicores) / 1000, MemoryLimit: spec.Resources.MemoryBytes}}
-	if _, err = e.create.CreateFenced(req, inv.IdempotencyKey, inv.IdempotencyKey); err != nil {
+	created, err := e.create.CreateFenced(req, inv.IdempotencyKey, inv.IdempotencyKey)
+	if err != nil {
 		return hostagent.Outcome{}, err
 	}
-	return hostagent.Outcome{State: "running"}, nil
+	return hostagent.Outcome{State: "running", ContainerID: created.Server.ID}, nil
 }
 func (e hostAgentEngine) Start(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
 	if err := e.validate(inv); err != nil {
@@ -63,7 +64,7 @@ func (e hostAgentEngine) Start(_ context.Context, inv hostagent.Invocation) (hos
 	if err = docker.Restart(server.ID); err != nil {
 		return hostagent.Outcome{}, err
 	}
-	return hostagent.Outcome{State: "running"}, nil
+	return hostagent.Outcome{State: "running", ContainerID: server.ID}, nil
 }
 func (e hostAgentEngine) Update(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
 	if err := e.validate(inv); err != nil {
@@ -81,7 +82,7 @@ func (e hostAgentEngine) Update(_ context.Context, inv hostagent.Invocation) (ho
 	if err = executeFleetLifecycle("reconfigure", server.ID, request); err != nil {
 		return hostagent.Outcome{}, err
 	}
-	return hostagent.Outcome{State: "running"}, nil
+	return hostagent.Outcome{State: "running", ContainerID: server.ID}, nil
 }
 func (e hostAgentEngine) Stop(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
 	if err := e.validate(inv); err != nil {

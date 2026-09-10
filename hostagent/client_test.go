@@ -25,7 +25,7 @@ func (e *fakeEngine) run(op string, in Invocation) (Outcome, error) {
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, op)
 	e.in = in
-	return Outcome{State: "running"}, e.err
+	return Outcome{State: "running", ContainerID: "container-owned"}, e.err
 }
 func (e *fakeEngine) Create(_ context.Context, i Invocation) (Outcome, error) {
 	return e.run("create", i)
@@ -89,6 +89,7 @@ func TestMapsEveryAssignmentOperationWithoutNodeOverride(t *testing.T) {
 		t.Run(op, func(t *testing.T) {
 			var mu sync.Mutex
 			claims := 0
+			var receipt ReceiptRequest
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer newest" {
 					t.Errorf("credential=%q", r.Header.Get("Authorization"))
@@ -105,6 +106,9 @@ func TestMapsEveryAssignmentOperationWithoutNodeOverride(t *testing.T) {
 						json.NewEncoder(w).Encode(Result{})
 					}
 				case "/internal/host-agent/receipt":
+					if err := json.NewDecoder(r.Body).Decode(&receipt); err != nil {
+						t.Errorf("decode receipt: %v", err)
+					}
 					json.NewEncoder(w).Encode(Result{Settled: true})
 				default:
 					http.Error(w, "unexpected", 404)
@@ -126,6 +130,12 @@ func TestMapsEveryAssignmentOperationWithoutNodeOverride(t *testing.T) {
 			}
 			if engine.in.HostID != "node-local" || engine.in.AgentID != "agent-local" || engine.in.WorkloadID != "work-1" || strings.Contains(string(engine.in.Payload), "node-local") {
 				t.Fatalf("invocation=%#v", engine.in)
+			}
+			if receipt.Receipt.Evidence == nil || receipt.Receipt.Evidence.Version != ExecutionEvidenceVersion ||
+				receipt.Receipt.Evidence.ServerID != "work-1" || receipt.Receipt.Evidence.HostID != "node-local" ||
+				receipt.Receipt.Evidence.ContainerID != "container-owned" ||
+				receipt.Receipt.Evidence.CompletedAtUnixMilli != receipt.Receipt.RecordedAtUnixMilli {
+				t.Fatalf("execution evidence=%#v", receipt.Receipt.Evidence)
 			}
 		})
 	}

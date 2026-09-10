@@ -38,7 +38,10 @@ type Invocation struct {
 	Payload                     []byte
 	IdempotencyKey              string
 }
-type Outcome struct{ State string }
+type Outcome struct {
+	State       string
+	ContainerID string
+}
 type Engine interface {
 	Create(context.Context, Invocation) (Outcome, error)
 	Start(context.Context, Invocation) (Outcome, error)
@@ -216,7 +219,11 @@ func (c *Client) executeAndSettle(ctx context.Context, a Action, now time.Time) 
 	if err != nil {
 		detail = bounded(err.Error(), 1024)
 	}
-	receipt := ReceiptRequest{ContractVersion, fmt.Sprintf("receipt/%s/%d/%d", a.Desired.WorkloadID, a.Fence.Generation, a.Fence.Attempt), a.Desired.WorkloadID, ExactReceipt{a.Fence.LeaseID, a.Fence.Attempt, a.Fence.Generation, a.Fence.PayloadSHA256, success, state, detail, now.UnixMilli()}}
+	var evidence *ExecutionEvidence
+	if success && out.ContainerID != "" {
+		evidence = &ExecutionEvidence{Version: ExecutionEvidenceVersion, ServerID: a.Desired.WorkloadID, HostID: c.cfg.HostID, ContainerID: out.ContainerID, State: state, CompletedAtUnixMilli: now.UnixMilli()}
+	}
+	receipt := ReceiptRequest{Version: ContractVersion, CommandID: fmt.Sprintf("receipt/%s/%d/%d", a.Desired.WorkloadID, a.Fence.Generation, a.Fence.Attempt), WorkloadID: a.Desired.WorkloadID, Receipt: ExactReceipt{LeaseID: a.Fence.LeaseID, Attempt: a.Fence.Attempt, Generation: a.Fence.Generation, PayloadSHA256: a.Fence.PayloadSHA256, Success: success, ObservedState: state, Detail: detail, RecordedAtUnixMilli: now.UnixMilli(), Evidence: evidence}}
 	var settled Result
 	if postErr := c.post(ctx, "/internal/host-agent/receipt", receipt, &settled); postErr != nil {
 		return postErr
@@ -317,6 +324,18 @@ type ExactReceipt struct {
 	Success               bool
 	ObservedState, Detail string
 	RecordedAtUnixMilli   int64
+	Evidence              *ExecutionEvidence `json:"evidence,omitempty"`
+}
+
+const ExecutionEvidenceVersion = "sessions.workload-execution.v1"
+
+type ExecutionEvidence struct {
+	Version              string `json:"version"`
+	ServerID             string `json:"server_id"`
+	HostID               string `json:"host_id"`
+	ContainerID          string `json:"container_id"`
+	State                string `json:"state"`
+	CompletedAtUnixMilli int64  `json:"completed_at_unix_milli"`
 }
 type Desired struct {
 	WorkloadID, HostID    string
