@@ -146,7 +146,13 @@ type appConfig struct {
 	WorldsDir     string
 	// RuntimeNodeID identifies this Bananagine runtime owner. It is emitted
 	// with successful create/adopt responses so callers never infer placement.
-	RuntimeNodeID string
+	RuntimeNodeID           string
+	HostAgentEnabled        bool
+	HostAgentURL            string
+	HostAgentID             string
+	HostAgentPrincipals     string
+	HostAgentIntervalMillis int
+	HostAgentMaxActions     int
 
 	// TemplatesDir is the build context passed to docker.Build when the
 	// /admin/build-image endpoint is hit. Mirrors the original service's
@@ -171,22 +177,28 @@ func parseConfig(data []byte) (appConfig, error) {
 		return cfg, fmt.Errorf("missing [config]")
 	}
 	var tmp struct {
-		Templates     string  `json:"templates"`
-		IPStart       string  `json:"ip_pool_start"`
-		IPEnd         string  `json:"ip_pool_end"`
-		PortStart     int     `json:"port_pool_start"`
-		PortEnd       int     `json:"port_pool_end"`
-		ExternalHost  string  `json:"external_host"`
-		ServiceToken  string  `json:"service_token"`
-		CPUBudget     float64 `json:"cpu_budget"`
-		MemBudget     float64 `json:"memory_budget"`
-		WorldsDir     string  `json:"worlds_dir"`
-		RuntimeNodeID string  `json:"runtime_node_id"`
-		TemplatesDir  string  `json:"templates_dir"`
-		NodeCPUCores  int     `json:"node_cpu_cores"`
-		NodeTotalMem  uint64  `json:"node_total_memory"`
-		NodeDiskTotal uint64  `json:"node_disk_total"`
-		NodeDiskUsed  uint64  `json:"node_disk_used"`
+		Templates               string  `json:"templates"`
+		IPStart                 string  `json:"ip_pool_start"`
+		IPEnd                   string  `json:"ip_pool_end"`
+		PortStart               int     `json:"port_pool_start"`
+		PortEnd                 int     `json:"port_pool_end"`
+		ExternalHost            string  `json:"external_host"`
+		ServiceToken            string  `json:"service_token"`
+		CPUBudget               float64 `json:"cpu_budget"`
+		MemBudget               float64 `json:"memory_budget"`
+		WorldsDir               string  `json:"worlds_dir"`
+		RuntimeNodeID           string  `json:"runtime_node_id"`
+		HostAgentEnabled        bool    `json:"host_agent_enabled"`
+		HostAgentURL            string  `json:"host_agent_url"`
+		HostAgentID             string  `json:"host_agent_id"`
+		HostAgentPrincipals     string  `json:"host_agent_principals"`
+		HostAgentIntervalMillis int     `json:"host_agent_interval_millis"`
+		HostAgentMaxActions     int     `json:"host_agent_max_actions"`
+		TemplatesDir            string  `json:"templates_dir"`
+		NodeCPUCores            int     `json:"node_cpu_cores"`
+		NodeTotalMem            uint64  `json:"node_total_memory"`
+		NodeDiskTotal           uint64  `json:"node_disk_total"`
+		NodeDiskUsed            uint64  `json:"node_disk_used"`
 	}
 	if err := cellconfig.Decode(data, &tmp); err != nil {
 		return cfg, fmt.Errorf("decode config: %w", err)
@@ -223,6 +235,12 @@ func parseConfig(data []byte) (appConfig, error) {
 		cfg.WorldsDir = "/var/sessions/worlds"
 	}
 	cfg.RuntimeNodeID = tmp.RuntimeNodeID
+	cfg.HostAgentEnabled = tmp.HostAgentEnabled
+	cfg.HostAgentURL = tmp.HostAgentURL
+	cfg.HostAgentID = tmp.HostAgentID
+	cfg.HostAgentPrincipals = tmp.HostAgentPrincipals
+	cfg.HostAgentIntervalMillis = tmp.HostAgentIntervalMillis
+	cfg.HostAgentMaxActions = tmp.HostAgentMaxActions
 	if cfg.RuntimeNodeID == "" {
 		// This is Bananagine's local single-runtime identity, retained for
 		// deployments that predate explicit node configuration. Multi-node
@@ -364,6 +382,10 @@ func bootstrap(configBytes []byte) error {
 		get: docker.Get, create: docker.Create,
 	}
 	recreateCore := newRecreateCore(createCore, docker.Destroy)
+	hostRuntime, err := newHostAgentRuntime(cfg, createCore, capacity, portPools, ipp)
+	if err != nil {
+		return fmt.Errorf("initialize host agent: %w", err)
+	}
 
 	for _, tmpl := range templates {
 		for _, p := range tmpl.Container.Ports {
@@ -1376,6 +1398,11 @@ func bootstrap(configBytes []byte) error {
 		return fmt.Errorf("register routes: %w", err)
 	}
 	pulp.OnStep(func(ev pulp.StepEvent) error {
+		if hostRuntime != nil {
+			if err := hostRuntime.Step(time.Now().UTC()); err != nil {
+				return fmt.Errorf("host agent step: %w", err)
+			}
+		}
 		// Drain docker events every step — even when nobody is subscribed
 		// — so the SSE cursor advances. Native cmd/server subscribes to
 		// provider.Events at SSE connect time and only sees live events

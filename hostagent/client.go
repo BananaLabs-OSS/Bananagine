@@ -49,15 +49,44 @@ type Engine interface {
 type Retryable interface{ Retryable() bool }
 
 type Client struct {
-	cfg      Config
-	http     *http.Client
-	engine   Engine
-	now      func() time.Time
-	mu       sync.Mutex
-	sequence uint64
+	cfg       Config
+	transport Transport
+	engine    Engine
+	now       func() time.Time
+	mu        sync.Mutex
+	sequence  uint64
+}
+
+type Transport interface {
+	Post(context.Context, string, map[string]string, []byte) (int, []byte, error)
+}
+type nativeTransport struct{ client *http.Client }
+
+func (t nativeTransport) Post(ctx context.Context, endpoint string, headers map[string]string, body []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	response, err := t.client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	return response.StatusCode, raw, err
 }
 
 func New(cfg Config, httpClient *http.Client, engine Engine) (*Client, error) {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	return NewWithTransport(cfg, nativeTransport{httpClient}, engine)
+}
+
+func NewWithTransport(cfg Config, transport Transport, engine Engine) (*Client, error) {
 	if cfg.BaseURL == "" || cfg.HostID == "" || cfg.AgentID == "" || len(cfg.Principals) == 0 || engine == nil {
 		return nil, errors.New("host agent requires local endpoint, identity, principal, and engine")
 	}
@@ -84,10 +113,31 @@ func New(cfg Config, httpClient *http.Client, engine Engine) (*Client, error) {
 	if cfg.RetryDelay < time.Second || cfg.RetryDelay > time.Hour {
 		return nil, errors.New("invalid retry delay")
 	}
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+	if transport == nil {
+		return nil, errors.New("host agent requires transport")
 	}
-	return &Client{cfg: cfg, http: httpClient, engine: engine, now: time.Now}, nil
+	return &Client{cfg: cfg, transport: transport, engine: engine, now: time.Now}, nil
+}
+
+type HostObservation struct {
+	ContractVersion     string `json:"contract_version"`
+	CommandID           string `json:"command_id"`
+	Observed            string `json:"observed"`
+	HeartbeatGeneration uint64 `json:"heartbeat_generation"`
+	AtUnixMilli         int64  `json:"at_unix_milli"`
+	CPUMillicores       int64  `json:"cpu_millicores"`
+	MemoryBytes         int64  `json:"memory_bytes"`
+	StorageBytes        int64  `json:"storage_bytes"`
+}
+
+func (c *Client) Observe(ctx context.Context, q HostObservation) error {
+	if q.ContractVersion == "" {
+		q.ContractVersion = "infrastructure-host.v1"
+	}
+	if q.CommandID == "" {
+		q.CommandID = c.command("observe")
+	}
+	return c.post(ctx, "/internal/host-agent/observe", q, nil)
 }
 
 func (c *Client) Step(ctx context.Context) (int, error) {
@@ -227,23 +277,12 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.cfg.BaseURL, "/")+path, bytes.NewReader(raw))
+	status, body, err := c.transport.Post(ctx, strings.TrimRight(c.cfg.BaseURL, "/")+path, map[string]string{"Authorization": "Bearer " + token, "Content-Type": "application/json"}, raw)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	response, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("evolution host agent %s rejected: status %d", path, response.StatusCode)
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("evolution host agent %s rejected: status %d", path, status)
 	}
 	if output != nil && json.Unmarshal(body, output) != nil {
 		return errors.New("invalid Evolution host-agent response")

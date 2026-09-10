@@ -43,6 +43,38 @@ func (e *fakeEngine) Delete(_ context.Context, i Invocation) (Outcome, error) {
 
 type classifiedError struct{ retry bool }
 
+type recordingTransport struct {
+	path    string
+	headers map[string]string
+	body    []byte
+}
+
+func (t *recordingTransport) Post(_ context.Context, endpoint string, headers map[string]string, body []byte) (int, []byte, error) {
+	t.path, t.headers, t.body = endpoint, headers, append([]byte(nil), body...)
+	return http.StatusOK, []byte(`{}`), nil
+}
+
+func TestCapabilityTransportCarriesAuthenticatedHeartbeatWithoutHostSelector(t *testing.T) {
+	transport := &recordingTransport{}
+	client, err := NewWithTransport(Config{BaseURL: "https://evolution.internal", HostID: "host-local", AgentID: "agent-local", Principals: []PrincipalCredential{{"signed", time.Now().Add(time.Hour)}}}, transport, &fakeEngine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	client.now = func() time.Time { return now }
+	err = client.Observe(context.Background(), HostObservation{Observed: "ready", HeartbeatGeneration: 9, AtUnixMilli: now.UnixMilli(), CPUMillicores: 4000, MemoryBytes: 8 << 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(transport.path, "/internal/host-agent/observe") || transport.headers["Authorization"] != "Bearer signed" {
+		t.Fatalf("transport=%#v", transport)
+	}
+	var wire map[string]any
+	if json.Unmarshal(transport.body, &wire) != nil || wire["host_id"] != nil || wire["agent_id"] != nil {
+		t.Fatalf("caller-selected identity field leaked into observation: %s", transport.body)
+	}
+}
+
 func (e classifiedError) Error() string   { return "engine failed" }
 func (e classifiedError) Retryable() bool { return e.retry }
 func action(op, host string) Action {
