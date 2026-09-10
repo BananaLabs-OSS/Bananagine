@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -33,41 +32,28 @@ type hostAgentEngine struct {
 	ips       *ipPool
 }
 
-type executableAssignment struct {
-	Create      *orchestration.CreateServerRequest `json:"create,omitempty"`
-	Environment map[string]string                  `json:"environment,omitempty"`
-}
-
-func (e hostAgentEngine) decode(inv hostagent.Invocation) (executableAssignment, error) {
+func (e hostAgentEngine) validate(inv hostagent.Invocation) error {
 	if inv.HostID != e.localHost || inv.WorkloadID == "" {
-		return executableAssignment{}, errors.New("cross-host or empty assignment")
+		return errors.New("cross-host or empty assignment")
 	}
-	var payload executableAssignment
-	if err := json.Unmarshal(inv.Payload, &payload); err != nil {
-		return payload, errors.New("invalid executable assignment payload")
-	}
-	return payload, nil
+	return nil
 }
 func (e hostAgentEngine) Create(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
-	payload, err := e.decode(inv)
-	if err != nil {
+	if err := e.validate(inv); err != nil {
 		return hostagent.Outcome{}, err
 	}
-	if payload.Create == nil || payload.Create.Template == "" {
-		return hostagent.Outcome{}, permanentHostAgentError{"assignment has no executable create specification"}
+	spec, err := hostagent.DecodeExecutable(inv)
+	if err != nil {
+		return hostagent.Outcome{}, permanentHostAgentError{err.Error()}
 	}
-	req := *payload.Create
-	if req.ServerID != "" && req.ServerID != inv.WorkloadID {
-		return hostagent.Outcome{}, permanentHostAgentError{"create server identity does not match assignment"}
-	}
-	req.ServerID = inv.WorkloadID
+	req := orchestration.CreateServerRequest{Template: spec.Template, ServerID: inv.WorkloadID, Env: spec.Environment, Resources: &orchestration.ResourceOverride{CPULimit: float64(spec.Resources.CPUMillicores) / 1000, MemoryLimit: spec.Resources.MemoryBytes}}
 	if _, err = e.create.CreateFenced(req, inv.IdempotencyKey, inv.IdempotencyKey); err != nil {
 		return hostagent.Outcome{}, err
 	}
 	return hostagent.Outcome{State: "running"}, nil
 }
 func (e hostAgentEngine) Start(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
-	if _, err := e.decode(inv); err != nil {
+	if err := e.validate(inv); err != nil {
 		return hostagent.Outcome{}, err
 	}
 	server, found, err := existingServerForRequestedID(inv.WorkloadID, docker.Get)
@@ -80,22 +66,25 @@ func (e hostAgentEngine) Start(_ context.Context, inv hostagent.Invocation) (hos
 	return hostagent.Outcome{State: "running"}, nil
 }
 func (e hostAgentEngine) Update(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
-	payload, err := e.decode(inv)
-	if err != nil {
+	if err := e.validate(inv); err != nil {
 		return hostagent.Outcome{}, err
+	}
+	spec, err := hostagent.DecodeExecutable(inv)
+	if err != nil {
+		return hostagent.Outcome{}, permanentHostAgentError{err.Error()}
 	}
 	server, found, err := existingServerForRequestedID(inv.WorkloadID, docker.Get)
 	if err != nil || !found {
 		return hostagent.Outcome{}, fmt.Errorf("resolve assigned runtime: %w", err)
 	}
-	request := fleetLifecycleRequest{ServerID: inv.WorkloadID, NodeID: e.localHost, Env: payload.Environment}
+	request := fleetLifecycleRequest{ServerID: inv.WorkloadID, NodeID: e.localHost, Env: spec.Environment}
 	if err = executeFleetLifecycle("reconfigure", server.ID, request); err != nil {
 		return hostagent.Outcome{}, err
 	}
 	return hostagent.Outcome{State: "running"}, nil
 }
 func (e hostAgentEngine) Stop(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
-	if _, err := e.decode(inv); err != nil {
+	if err := e.validate(inv); err != nil {
 		return hostagent.Outcome{}, err
 	}
 	server, found, err := existingServerForRequestedID(inv.WorkloadID, docker.Get)
@@ -108,7 +97,7 @@ func (e hostAgentEngine) Stop(_ context.Context, inv hostagent.Invocation) (host
 	return hostagent.Outcome{State: "stopped"}, nil
 }
 func (e hostAgentEngine) Delete(_ context.Context, inv hostagent.Invocation) (hostagent.Outcome, error) {
-	if _, err := e.decode(inv); err != nil {
+	if err := e.validate(inv); err != nil {
 		return hostagent.Outcome{}, err
 	}
 	server, found, err := existingServerForRequestedID(inv.WorkloadID, docker.Get)
