@@ -71,6 +71,7 @@ func TestSharedEngineProofStagesPortableCellsAndResolvesProviders(t *testing.T) 
 	var output lockedBuffer
 	port := freePort(t)
 	stop := startPulpProcess(t, hostExe, bundleRoot, &output, []string{
+		"HTTP_HOST=127.0.0.1",
 		"HTTP_PORT=" + strconv.Itoa(port),
 		"PULP_WAZERO_CACHE=" + filepath.Join(temp, "wazero"),
 	}, "-app", filepath.Join(proofRoot, "pulp.app.toml"), "-storage-root", storageRoot)

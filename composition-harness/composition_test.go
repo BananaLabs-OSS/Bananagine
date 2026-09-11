@@ -300,6 +300,11 @@ func stageProductionApplicationBundle(t *testing.T, repoRoot, devRoot string) (b
 	copyBundleFile(t, filepath.Join(repoRoot, "templates", "example-minecraft.yaml"), filepath.Join(storageRoot, "apps", "bananagine", "default", "cells", "bananagine", "primary", "templates", "example-minecraft.yaml"))
 
 	build(t, filepath.Join(repoRoot, "state-cell"), filepath.Join(bundleRoot, "Bananagine", "state-cell", "runtime-catalog-state.wasm"), goCache, true)
+	// Fused execution still authenticates each logical member from its source
+	// artifact. Stage both member Wasm files even though state-cell is the only
+	// physical execution unit.
+	build(t, filepath.Join(repoRoot, "registry-cell"), filepath.Join(bundleRoot, "Bananagine", "registry-cell", "runtime-directory.wasm"), goCache, true)
+	build(t, filepath.Join(repoRoot, "template-catalog-cell"), filepath.Join(bundleRoot, "Bananagine", "template-catalog-cell", "template-catalog.wasm"), goCache, true)
 	build(t, filepath.Join(repoRoot, "worker-cell"), filepath.Join(bundleRoot, "Bananagine", "worker-cell", "async-http-job.wasm"), goCache, true)
 	build(t, filepath.Join(repoRoot, "pulp-cell"), filepath.Join(bundleRoot, "Bananagine", "pulp-cell", "bananagine.wasm"), goCache, true)
 	build(t, filepath.Join(devRoot, "Pulp-Lua", "pulp-cell"), filepath.Join(bundleRoot, "Pulp-Lua", "pulp-cell", "lua-orchestrator.wasm"), goCache, true)
@@ -349,6 +354,7 @@ func expandProductionFacadeManifest(t *testing.T, path string) {
 
 func productionBundleEnvironment(port int, storageRoot, dockerURL string) []string {
 	return []string{
+		"HTTP_HOST=127.0.0.1",
 		"HTTP_PORT=" + strconv.Itoa(port),
 		"HTTP_FETCH_ALLOW=127.0.0.0/8,::1/128",
 		"PULP_WAZERO_CACHE=" + filepath.Join(storageRoot, "wazero"),
@@ -826,6 +832,7 @@ sha256 = "%x"
 	var processOutput lockedBuffer
 	port := freePort(t)
 	stop := startPulpProcess(t, hostExe, temp, &processOutput, []string{
+		"HTTP_HOST=127.0.0.1",
 		"HTTP_PORT=" + strconv.Itoa(port),
 		"HTTP_FETCH_ALLOW=127.0.0.0/8,::1/128",
 		"PULP_WAZERO_CACHE=" + filepath.Join(temp, "wazero"),
@@ -961,6 +968,7 @@ instance = "node-b"
 
 	gatewayPort := freePort(t)
 	hostStop := startPulpProcess(t, hostExe, temp, &processOutput, []string{
+		"HTTP_HOST=127.0.0.1",
 		"HTTP_FETCH_ALLOW=127.0.0.0/8,::1/128",
 		"PULP_WAZERO_CACHE=" + filepath.Join(temp, "wazero"),
 	}, "-host", hostManifest, "-http-port", strconv.Itoa(gatewayPort))
@@ -1008,6 +1016,7 @@ instance = "node-b"
 	hostStop()
 	restartPort := freePort(t)
 	restartStop := startPulpProcess(t, hostExe, temp, &processOutput, []string{
+		"HTTP_HOST=127.0.0.1",
 		"HTTP_FETCH_ALLOW=127.0.0.0/8,::1/128",
 		"PULP_WAZERO_CACHE=" + filepath.Join(temp, "wazero"),
 	}, "-host", hostManifest, "-http-port", strconv.Itoa(restartPort))
