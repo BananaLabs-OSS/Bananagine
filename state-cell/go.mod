@@ -1,6 +1,6 @@
 module runtime-catalog-state-cell
 
-go 1.25.6
+go 1.25.13
 
 require (
 	runtime-directory-cell v0.0.0

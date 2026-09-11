@@ -1,6 +1,6 @@
 module bananagine-composition-probe
 
-go 1.25.6
+go 1.25.13
 
 require (
 	bananagine-cell v0.0.0

@@ -1,7 +1,7 @@
 name = "async-http-job"
 version = "0.1.0"
 wasm = "async-http-job.wasm"
-wasm_sha256 = "48a3c34c256c3afe9bec69929d091a47eb7505ba279e9c61c1a929cd39032f9a"
+wasm_sha256 = "71bb484fe6266470fa1d77881c9531cb3288de2ad1b00ab6b92dd5330806ca3d"
 
 provides = [
   "async-http-job.v1.http.submit",

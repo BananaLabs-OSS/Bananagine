@@ -1,7 +1,7 @@
 name = "runtime-catalog-state"
 version = "0.1.0"
 wasm = "runtime-catalog-state.wasm"
-wasm_sha256 = "9c253395d2f1e253c3b838a8d9e459d763449ad72c064f6635e78a339257a417"
+wasm_sha256 = "67acedd47e955b6067068750ee0fec57e5b88a3f31d2172f1e47d9a4c115901c"
 
 # This physical cell retains both logical packages' public provider contracts.
 provides = [

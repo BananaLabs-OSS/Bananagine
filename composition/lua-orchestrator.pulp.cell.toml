@@ -1,7 +1,7 @@
 name = "bananagine-lua"
 version = "0.1.0"
 wasm = "../../Pulp-Lua/pulp-cell/lua-orchestrator.wasm"
-wasm_sha256 = "d56edb0893723f758b1087ee6ba749379640d9efc41a0d08df453a5872f98ef5"
+wasm_sha256 = "6b0d4e2974a9b46924bc5bc0b324889cb58a1ebeac8b8a0b15e9a5ba7bd45365"
 
 provides = [
   "orchestrator.dispatch",

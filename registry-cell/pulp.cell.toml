@@ -1,7 +1,7 @@
 name = "runtime-directory"
 version = "0.1.0"
 wasm = "runtime-directory.wasm"
-wasm_sha256 = "79e728a0d105531dee932feeffae971419f1aa0266c365002a3a2d479cab99f5"
+wasm_sha256 = "ef2066996c0011a9498c76d10ce00e4affb506eb921fd842e12b42e827c31344"
 
 provides = [
   "runtime-directory.v1.register",
