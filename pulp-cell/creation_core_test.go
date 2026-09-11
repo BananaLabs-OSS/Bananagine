@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/BananaLabs-OSS/Fiber/pulp"
@@ -91,5 +92,73 @@ func TestCreationCorePreservesIdempotentCreateProjection(t *testing.T) {
 	}
 	if !result.Existing || result.Server.ID != "container-existing" || result.Server.Name != logicalID || result.Server.NodeID != "node-adopt-1" || result.Server.WorldName != logicalID || result.Server.IP != "games.example.test" {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestCreationCoreFencedProvisionReplacesExitedRuntimeAndPreservesLogicalWorld(t *testing.T) {
+	const logicalID = "minecraft-failed"
+	retired := ""
+	created := false
+	core := creationCore{
+		templates:     map[string]Template{"minecraft": {Name: "minecraft", Container: ContainerSpec{Image: "paper", Environment: map[string]string{}, Volumes: map[string]string{"/worlds/{{SERVER_ID}}": "/data"}}}},
+		runtimeNodeID: "node-1", capacity: newCapacityTracker(8, 16), ipp: newIPPool("10.99.0.10", "10.99.0.11"), portPools: newPortPoolSet(newPortPool(30000, 30010)),
+		get: func(string) (*docker.Server, error) {
+			return &docker.Server{ID: "failed-container", Name: "/" + logicalID, Status: "stopped"}, nil
+		},
+		recoverFailed: func(containerID, serverID string) error { retired = containerID + ":" + serverID; return nil },
+		create: func(request docker.CreateRequest) (*docker.Server, error) {
+			created = true
+			if request.Name != logicalID || request.Volumes["/worlds/"+logicalID] != "/data" || request.Environment["SERVER_JAR_URL"] != "https://example.test/server.jar" {
+				t.Fatalf("replacement request = %#v", request)
+			}
+			return &docker.Server{ID: "replacement", Name: "/" + logicalID, Status: "running"}, nil
+		},
+	}
+	result, err := core.CreateFenced(orchestration.CreateServerRequest{Template: "minecraft", ServerID: logicalID, Env: map[string]string{"SERVER_JAR_URL": "https://example.test/server.jar"}}, "provision-key", "provision-effect")
+	if err != nil || !created || retired != "failed-container:"+logicalID || result.Existing || result.Server.ID != "replacement" || result.Server.WorldName != logicalID {
+		t.Fatalf("recovery = (%#v, retired=%q, created=%t, err=%v)", result, retired, created, err)
+	}
+}
+
+func TestCreationCoreFencedProvisionKeepsActiveRuntimeAsIdempotentReplay(t *testing.T) {
+	core := creationCore{
+		get: func(string) (*docker.Server, error) {
+			return &docker.Server{ID: "active-container", Name: "/server", Status: "running"}, nil
+		},
+		recoverFailed: func(string, string) error { t.Fatal("active runtime must not be retired"); return nil },
+		create: func(docker.CreateRequest) (*docker.Server, error) {
+			t.Fatal("active runtime must not be recreated")
+			return nil, nil
+		},
+	}
+	result, err := core.CreateFenced(orchestration.CreateServerRequest{ServerID: "server"}, "key", "effect")
+	if err != nil || !result.Existing || result.Server.ID != "active-container" {
+		t.Fatalf("active replay = (%#v, %v)", result, err)
+	}
+}
+
+func TestCreationCoreWillNotReplaceExitedRuntimeWithoutFleetFence(t *testing.T) {
+	core := creationCore{get: func(string) (*docker.Server, error) {
+		return &docker.Server{ID: "failed", Name: "/server", Status: "exited"}, nil
+	}, recoverFailed: func(string, string) error { t.Fatal("must not retire without fence"); return nil }}
+	if _, err := core.Create(orchestration.CreateServerRequest{ServerID: "server"}); err == nil || creationHTTPStatus(err) != 409 {
+		t.Fatalf("unfenced recovery error = %v, want conflict", err)
+	}
+}
+
+func TestCreationCoreKeepsExitedRuntimeWhenFencedRetirementFails(t *testing.T) {
+	createCalls := 0
+	core := creationCore{
+		get: func(string) (*docker.Server, error) {
+			return &docker.Server{ID: "failed", Name: "/server", Status: "stopped"}, nil
+		},
+		recoverFailed: func(string, string) error { return errors.New("docker unavailable") },
+		create:        func(docker.CreateRequest) (*docker.Server, error) { createCalls++; return nil, nil },
+	}
+	if _, err := core.CreateFenced(orchestration.CreateServerRequest{ServerID: "server"}, "key", "effect"); err == nil || creationHTTPStatus(err) != 500 {
+		t.Fatalf("retirement error = %v, want internal failure", err)
+	}
+	if createCalls != 0 {
+		t.Fatalf("create calls = %d, want zero after failed retirement", createCalls)
 	}
 }

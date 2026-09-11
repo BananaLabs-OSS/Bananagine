@@ -381,6 +381,12 @@ func bootstrap(configBytes []byte) error {
 		capacity: capacity, ipp: ipp, portPools: portPools,
 		get: docker.Get, create: docker.Create,
 	}
+	createCore.recoverFailed = func(containerID, serverID string) error {
+		// Docker destroy removes only the failed runtime. The template's
+		// bind-mounted world directory remains authoritative and is mounted by
+		// the replacement created under the same logical server ID.
+		return retireServer(containerID, false, serverID, docker.Destroy, capacity, portPools, ipp)
+	}
 	recreateCore := newRecreateCore(createCore, docker.Destroy)
 	hostRuntime, err := newHostAgentRuntime(cfg, createCore, capacity, portPools, ipp)
 	if err != nil {
@@ -548,7 +554,7 @@ func bootstrap(configBytes []byte) error {
 			c.JSON(400, pulpgin.H{"error": err.Error()})
 			return
 		}
-		result, err := createCore.Create(req)
+		result, err := createCore.CreateFenced(req, c.GetHeader(fleetIdempotencyHeader), c.GetHeader(fleetEffectIDHeader))
 		if err != nil {
 			c.JSON(creationHTTPStatus(err), pulpgin.H{"error": err.Error()})
 			return

@@ -27,6 +27,10 @@ type creationCore struct {
 	get           dockerServerGet
 	create        dockerServerCreate
 	hook          func(string) (map[string]string, error)
+	// recoverFailed retires an exactly-resolved, unusable runtime while leaving
+	// its bind-mounted world data in place. It is used only by the fenced Fleet
+	// create path; legacy create callers retain lookup-only idempotency.
+	recoverFailed func(containerID, serverID string) error
 }
 
 type creationResult struct {
@@ -72,13 +76,30 @@ func defaultPreStartHook(url string) (map[string]string, error) {
 }
 
 func (core creationCore) Create(req orchestration.CreateServerRequest) (creationResult, error) {
+	return core.CreateFenced(req, "", "")
+}
+
+// CreateFenced reconciles the one safe create-retry case that lookup-only
+// idempotency cannot handle: a previous attempt created the exact owned
+// container but it subsequently exited before becoming ready. Fleet supplies
+// both stable identities on every privileged provision request. An active or
+// indeterminate existing runtime is never replaced here.
+func (core creationCore) CreateFenced(req orchestration.CreateServerRequest, idempotencyKey, effectID string) (creationResult, error) {
 	if req.ServerID != "" {
 		existing, found, err := existingServerForRequestedID(req.ServerID, core.get)
 		if err != nil {
 			return creationResult{}, createFailure(500, "%v", err)
 		}
 		if found {
-			return creationResult{Server: core.responseServer(*existing, req.ServerID), Existing: true}, nil
+			if !failedCreateRuntimeStatus(existing.Status) {
+				return creationResult{Server: core.responseServer(*existing, req.ServerID), Existing: true}, nil
+			}
+			if core.recoverFailed == nil || !validRecreateToken(idempotencyKey) || !validRecreateToken(effectID) {
+				return creationResult{}, createFailure(409, "failed existing runtime requires fenced Fleet recovery")
+			}
+			if err := core.recoverFailed(existing.ID, req.ServerID); err != nil {
+				return creationResult{}, createFailure(500, "retire failed existing runtime: %v", err)
+			}
 		}
 	}
 
@@ -178,6 +199,17 @@ func (core creationCore) Create(req orchestration.CreateServerRequest) (creation
 		}
 	}
 	return creationResult{Server: core.responseServer(*server, serverID)}, nil
+}
+
+func failedCreateRuntimeStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	// The Docker host provider canonicalizes Engine `exited` to `stopped`.
+	// Keep the raw value for direct/core adapters and old hosts as well.
+	case "stopped", "exited", "dead":
+		return true
+	default:
+		return false
+	}
 }
 
 // responseServer is the sole create/adopt projection. The logical server ID
